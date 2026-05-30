@@ -26,7 +26,7 @@ from rich.syntax import Syntax
 from ui import console, mf, ok, warn, err, section
 
 # ── Config ───────────────────────────────────────────────────────────────────
-HALL_OF_FAME_REPO = os.getenv("MF_HOF_REPO", "Hbbrine/ModelFucker")
+HALL_OF_FAME_REPO = os.getenv("MF_HOF_REPO", "hackerbbrine/ModelFucker")
 HALL_OF_FAME_FILE = "HALL_OF_FAME.md"
 
 # Your GitHub OAuth App client ID (device flow, no secret needed for public repo scope)
