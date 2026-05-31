@@ -264,38 +264,57 @@ def main():
     llama_cmd = [sys.executable, "-m", "pip", "install",
                  "llama-cpp-python", "--upgrade", "--force-reinstall", "--no-cache-dir"]
 
-    if gpu.kind != "cpu":
-        env = llama_env(gpu)
-        info(f"CMAKE_ARGS = {env.get('CMAKE_ARGS', '')}")
-        info("Attempting GPU build (ROCm/CUDA)...")
-        result = subprocess.run(llama_cmd, env=env, check=False)
-    else:
-        result = subprocess.run(llama_cmd, check=False)
+    def _llama_gpu_works() -> bool:
+        """Check if the installed llama-cpp-python actually has GPU support compiled in."""
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c",
+                 "import llama_cpp; print(llama_cpp.llama_cpp.llama_supports_gpu_offload())"],
+                capture_output=True, text=True, timeout=15,
+            )
+            return result.stdout.strip().lower() == "true"
+        except Exception:
+            return False
 
-    if result.returncode == 0:
-        ok("llama-cpp-python built and installed")
+    def _try_build(cmake_args: str, label: str) -> bool:
+        env = os.environ.copy()
+        if cmake_args:
+            env["CMAKE_ARGS"] = cmake_args
+        info(f"Trying {label}  (CMAKE_ARGS={cmake_args or 'none'})...")
+        r = subprocess.run(llama_cmd, env=env, check=False)
+        if r.returncode != 0:
+            warn(f"{label} build failed (compiler error)")
+            return False
+        if _llama_gpu_works():
+            ok(f"{label} build succeeded — GPU inference enabled")
+            return True
+        warn(f"{label} build installed but GPU offload not active (silently fell back to CPU)")
+        return False
+
+    gpu_inference_built = False
+
+    if gpu.kind == "nvidia":
+        gpu_inference_built = _try_build("-DGGML_CUDA=ON", "CUDA")
+    elif gpu.kind == "amd":
+        target_flag = f"-DGGML_HIPBLAS=ON -DAMDGPU_TARGETS={gpu.target}" if gpu.target else "-DGGML_HIPBLAS=ON"
+        gpu_inference_built = _try_build(target_flag, "ROCm/HIP")
+
+    if not gpu_inference_built and gpu.kind != "cpu":
+        warn("Trying Vulkan (works on AMD/NVIDIA without ROCm/CUDA SDK, slightly slower)...")
+        gpu_inference_built = _try_build("-DGGML_VULKAN=ON", "Vulkan")
+
+    if not gpu_inference_built:
         if gpu.kind != "cpu":
-            ok("GPU inference support compiled in")
-    else:
-        warn("GPU build failed — trying Vulkan fallback (works on AMD/NVIDIA without ROCm/CUDA SDK)...")
-        vulkan_env = os.environ.copy()
-        vulkan_env["CMAKE_ARGS"] = "-DGGML_VULKAN=ON"
-        result2 = subprocess.run(llama_cmd, env=vulkan_env, check=False)
-        if result2.returncode == 0:
-            ok("llama-cpp-python built with Vulkan support")
-            ok("GPU inference will use Vulkan (slightly slower than ROCm/CUDA but much faster than CPU)")
-        else:
-            warn("Vulkan build also failed — falling back to CPU-only build")
-            subprocess.run(llama_cmd, check=False)
+            warn("All GPU builds failed — installing CPU-only build")
+        _try_build("", "CPU-only")
+        if gpu.kind != "cpu":
             print()
+            print("  GPU inference unavailable. Manual options:")
+            print("  Vulkan: CMAKE_ARGS=\"-DGGML_VULKAN=ON\" pip install llama-cpp-python --force-reinstall")
             if gpu.kind == "amd":
-                print("  To enable GPU inference manually:")
-                print("  ROCm:   CMAKE_ARGS=\"-DGGML_HIPBLAS=ON\" pip install llama-cpp-python --force-reinstall")
-                print("  Vulkan: CMAKE_ARGS=\"-DGGML_VULKAN=ON\" pip install llama-cpp-python --force-reinstall")
+                print(f"  ROCm:   CMAKE_ARGS=\"-DGGML_HIPBLAS=ON -DAMDGPU_TARGETS={gpu.target}\" pip install llama-cpp-python --force-reinstall")
             elif gpu.kind == "nvidia":
-                print("  To enable GPU inference manually:")
                 print("  CUDA:   CMAKE_ARGS=\"-DGGML_CUDA=ON\" pip install llama-cpp-python --force-reinstall")
-                print("  Vulkan: CMAKE_ARGS=\"-DGGML_VULKAN=ON\" pip install llama-cpp-python --force-reinstall")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     header("Done")
