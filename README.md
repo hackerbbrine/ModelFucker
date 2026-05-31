@@ -3,12 +3,12 @@
 ```
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
-║        M O D E L   F U C K E R   v 3 . 0                    ║
+║        M O D E L   F U C K E R   v 3 . 0                      ║
 ║                                                               ║
-║        by Hbbrine / FIBERCORE                                 ║
+║        by Hackerbbrine                                        ║
 ║        "science requires sacrifice"                           ║
+║           (I never said that)                                 ║
 ║                                                               ║
-║        ◈ A JS FILE, POSTGRES, AND A DREAM ◈                  ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
 ```
@@ -122,4 +122,4 @@ A `.clean` backup is created automatically before the first write. Use `--restor
 
 ---
 
-*by Hbbrine / FIBERCORE*
+*by Hackerbbrine*
