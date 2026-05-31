@@ -178,12 +178,19 @@ class InferenceSession:
 
         use_gpu_layers = _GPU.backend != "cpu"
         gpu_loaded     = False
-        gpu_fail_msg   = None
+
+        # Check if llama-cpp-python was actually compiled with GPU support.
+        # n_gpu_layers=-1 is silently ignored when GPU offload wasn't compiled in —
+        # this is the only reliable way to detect that before wasting time loading.
+        try:
+            import llama_cpp as _lc
+            llama_has_gpu = _lc.llama_cpp.llama_supports_gpu_offload()
+        except Exception:
+            llama_has_gpu = False
 
         _console_state = _save_win32_console()
         try:
-            if use_gpu_layers:
-                # Try ROCm/CUDA layers first
+            if use_gpu_layers and llama_has_gpu:
                 try:
                     self.llm = Llama(
                         model_path=self.model_path,
@@ -194,25 +201,7 @@ class InferenceSession:
                     )
                     gpu_loaded = True
                 except Exception as e:
-                    gpu_fail_msg = str(e).splitlines()[0][:120]
-
-                # Try Vulkan fallback (works on AMD without ROCm compile)
-                if not gpu_loaded:
-                    try:
-                        self.llm = Llama(
-                            model_path=self.model_path,
-                            n_ctx=self.n_ctx,
-                            n_threads=self.n_threads,
-                            n_gpu_layers=-1,
-                            verbose=False,
-                        )
-                        gpu_loaded = True
-                        gpu_fail_msg = None
-                    except Exception:
-                        pass
-
-                # CPU fallback
-                if not gpu_loaded:
+                    warn(f"GPU load failed: [dim]{str(e).splitlines()[0][:100]}[/dim]")
                     self.llm = Llama(
                         model_path=self.model_path,
                         n_ctx=self.n_ctx,
@@ -234,13 +223,10 @@ class InferenceSession:
             ok(f"Model loaded in {elapsed:.1f}s — [green]GPU inference active[/green]")
         else:
             ok(f"Model loaded in {elapsed:.1f}s — [yellow]CPU inference[/yellow]")
-            if gpu_fail_msg:
-                warn(f"GPU inference failed: [dim]{gpu_fail_msg}[/dim]")
+            if use_gpu_layers and not llama_has_gpu:
                 warn(
-                    "Fix: rebuild llama-cpp-python with GPU support\n"
-                    "  AMD ROCm : [bold]python install.py[/bold]\n"
-                    "  NVIDIA   : [bold]python install.py[/bold]\n"
-                    "  Vulkan   : [bold]CMAKE_ARGS=\"-DGGML_VULKAN=ON\" pip install llama-cpp-python --force-reinstall[/bold]"
+                    "llama-cpp-python compiled without GPU support — inference is on CPU\n"
+                    "  Fix: [bold]CMAKE_ARGS=\"-DGGML_VULKAN=ON\" pip install llama-cpp-python --upgrade --force-reinstall --no-cache-dir[/bold]"
                 )
 
     def unload(self):
