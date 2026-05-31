@@ -203,11 +203,17 @@ class InferenceSession:
         self.unload()
         self._load()
 
-    def generate(self, prompt: str, max_tokens: int = 2048, temperature: float = 0.8) -> tuple[str, float, float]:
+    def generate(
+        self,
+        prompt: str,
+        max_tokens: int = 2048,
+        temperature: float = 0.8,
+        stop_tokens: list = None,
+    ) -> tuple[str, float, float]:
         """
         Returns (response_text, prompt_tps, gen_tps).
-        Streams token by token and stops early if repetition is detected,
-        rather than cutting off at a fixed token count.
+        Streams token by token, stops on template stop sequences,
+        and bails early if repetition is detected.
         """
         t0 = time.time()
         tokens: list[str] = []
@@ -219,6 +225,7 @@ class InferenceSession:
             temperature=temperature,
             echo=False,
             stream=True,
+            stop=stop_tokens or [],
         ):
             token = chunk["choices"][0]["text"]
             tokens.append(token)
@@ -228,11 +235,15 @@ class InferenceSession:
                 break
 
         text = "".join(tokens)
-        elapsed = time.time() - t0
 
-        # llama_cpp doesn't give us timing breakdown in stream mode so we approximate
+        # Strip any stop tokens that leaked through (can happen with corrupted weights)
+        if stop_tokens:
+            for st in stop_tokens:
+                text = text.replace(st, "")
+
+        elapsed = time.time() - t0
         prompt_tps = len(prompt.split()) / max(elapsed * 0.15, 0.001)
-        gen_tps = total_tokens / max(elapsed * 0.85, 0.001)
+        gen_tps    = total_tokens / max(elapsed * 0.85, 0.001)
 
         return text, prompt_tps, gen_tps
 
@@ -371,13 +382,16 @@ def run_chat(
         # ── Normal generation ────────────────────────────────────────────────
         history.append({"role": "user", "content": user_input})
 
-        prompt = _build_prompt(history, model_path)
+        tmpl_key  = _detect_template(model_path)
+        stop_toks = _STOP_TOKENS.get(tmpl_key, [])
+        prompt    = _build_prompt(history, model_path)
         console.print("[bold magenta]model[/bold magenta] ", end="")
 
         try:
             with console.status(""):
                 response, prompt_tps, gen_tps = session.generate(
-                    prompt, max_tokens=max_tokens, temperature=temperature
+                    prompt, max_tokens=max_tokens, temperature=temperature,
+                    stop_tokens=stop_toks,
                 )
         except Exception as exc:
             # Heavily corrupted models can segfault or throw. That's a feature.
@@ -405,6 +419,13 @@ _CHAT_TEMPLATES = {
                 "<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n"),
     "default": ("User: {user}\nAssistant: {assistant}\n",
                 "User: {user}\nAssistant:"),
+}
+
+_STOP_TOKENS = {
+    "gemma":   ["<end_of_turn>", "<start_of_turn>"],
+    "llama":   ["</s>", "[INST]"],
+    "chatml":  ["<|im_end|>", "<|im_start|>"],
+    "default": ["\nUser:", "\nAssistant:"],
 }
 
 def _detect_template(model_path: str) -> str:
