@@ -32,12 +32,11 @@ console = Console(theme=theme, highlight=False, legacy_windows=False)
 _HEADER = (
     "╔═══════════════════════════════════════════════════════════════╗\n"
     "║                                                               ║\n"
-    "║   [bold white]M O D E L   F U C K E R   v 3 . 0[/bold white]                       ║\n"
+    "║   [bold white]M O D E L   F U C K E R   v 3 . 0[/bold white]  ║\n"
     "║                                                               ║\n"
-    "║   [dim]by Hbbrine / FIBERCORE[/dim]                                    ║\n"
-    '║   [dim]"science requires sacrifice"[/dim]                               ║\n'
+    "║   [dim]by Hackerbbrine[/dim]                                  ║\n"
+    '║   [dim]"Fuck you models to hell and back"[/dim]               ║\n'
     "║                                                               ║\n"
-    "║   [yellow]◈ A JS FILE, POSTGRES, AND A DREAM ◈[/yellow]                      ║\n"
     "║                                                               ║\n"
     "╚═══════════════════════════════════════════════════════════════╝"
 )
