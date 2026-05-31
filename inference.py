@@ -164,12 +164,11 @@ class InferenceSession:
             )
             sys.exit(1)
 
-        self.model_path = model_path
-        self.n_ctx = n_ctx
-        self.n_threads = n_threads
+        self.model_path   = model_path
+        self.n_ctx        = n_ctx
+        self.n_threads    = n_threads
         self.llm: Optional[Llama] = None
-        self.template_key = _detect_template(model_path)
-        self.stop_tokens  = _STOP_TOKENS.get(self.template_key, [])
+        self.template_key, self.stop_tokens, self.use_chat_api = _detect_template(model_path)
         self._load()
 
     def _load(self):
@@ -205,17 +204,55 @@ class InferenceSession:
         self.unload()
         self._load()
 
-    def generate(
+    def generate_chat(
+        self,
+        history: list[dict],
+        max_tokens: int = 2048,
+        temperature: float = 0.8,
+    ) -> tuple[str, float, float]:
+        """
+        Generate using create_chat_completion — lets llama.cpp apply the model's
+        own built-in chat template. Most accurate path.
+        """
+        t0 = time.time()
+        tokens: list[str] = []
+        total_tokens = 0
+
+        for chunk in self.llm.create_chat_completion(
+            messages=history,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream=True,
+            stop=self.stop_tokens,
+        ):
+            delta   = chunk["choices"][0].get("delta", {})
+            content = delta.get("content", "")
+            if not content:
+                continue
+            tokens.append(content)
+            total_tokens += 1
+            if total_tokens >= 64 and _is_repeating(tokens):
+                break
+
+        text = "".join(tokens)
+        if self.stop_tokens:
+            for st in self.stop_tokens:
+                text = text.replace(st, "")
+
+        elapsed    = time.time() - t0
+        prompt_tps = sum(len(m["content"].split()) for m in history) / max(elapsed * 0.15, 0.001)
+        gen_tps    = total_tokens / max(elapsed * 0.85, 0.001)
+        return text, prompt_tps, gen_tps
+
+    def generate_raw(
         self,
         prompt: str,
         max_tokens: int = 2048,
         temperature: float = 0.8,
-        stop_tokens: list = None,
     ) -> tuple[str, float, float]:
         """
-        Returns (response_text, prompt_tps, gen_tps).
-        Streams token by token, stops on template stop sequences,
-        and bails early if repetition is detected.
+        Generate from a raw pre-formatted prompt string.
+        Fallback when the model has no embedded chat template.
         """
         t0 = time.time()
         tokens: list[str] = []
@@ -227,26 +264,22 @@ class InferenceSession:
             temperature=temperature,
             echo=False,
             stream=True,
-            stop=stop_tokens or [],
+            stop=self.stop_tokens,
         ):
             token = chunk["choices"][0]["text"]
             tokens.append(token)
             total_tokens += 1
-
             if total_tokens >= 64 and _is_repeating(tokens):
                 break
 
         text = "".join(tokens)
-
-        # Strip any stop tokens that leaked through (can happen with corrupted weights)
-        if stop_tokens:
-            for st in stop_tokens:
+        if self.stop_tokens:
+            for st in self.stop_tokens:
                 text = text.replace(st, "")
 
-        elapsed = time.time() - t0
+        elapsed    = time.time() - t0
         prompt_tps = len(prompt.split()) / max(elapsed * 0.15, 0.001)
         gen_tps    = total_tokens / max(elapsed * 0.85, 0.001)
-
         return text, prompt_tps, gen_tps
 
 
@@ -383,16 +416,19 @@ def run_chat(
 
         # ── Normal generation ────────────────────────────────────────────────
         history.append({"role": "user", "content": user_input})
-
-        prompt = _build_prompt(history, model_path, session.template_key)
         console.print("[bold magenta]model[/bold magenta] ", end="")
 
         try:
             with console.status(""):
-                response, prompt_tps, gen_tps = session.generate(
-                    prompt, max_tokens=max_tokens, temperature=temperature,
-                    stop_tokens=session.stop_tokens,
-                )
+                if session.use_chat_api:
+                    response, prompt_tps, gen_tps = session.generate_chat(
+                        history, max_tokens=max_tokens, temperature=temperature,
+                    )
+                else:
+                    prompt = _build_prompt(history, model_path, session.template_key)
+                    response, prompt_tps, gen_tps = session.generate_raw(
+                        prompt, max_tokens=max_tokens, temperature=temperature,
+                    )
         except Exception as exc:
             # Heavily corrupted models can segfault or throw. That's a feature.
             err(f"Model had a moment: {exc}")
@@ -422,38 +458,125 @@ _CHAT_TEMPLATES = {
 }
 
 _STOP_TOKENS = {
-    "gemma":   ["<end_of_turn>", "<start_of_turn>"],
-    "llama":   ["</s>", "[INST]"],
-    "chatml":  ["<|im_end|>", "<|im_start|>"],
-    "default": ["\nUser:", "\nAssistant:"],
+    "gemma":    ["<end_of_turn>", "<start_of_turn>"],  # Gemma 1/2/3
+    "gemma4":   ["<turn|>", "<|turn>"],                 # Gemma 4
+    "llama":    ["</s>", "[INST]"],
+    "llama3":   ["<|eot_id|>", "<|start_header_id|>"],  # Llama 3+
+    "chatml":   ["<|im_end|>", "<|im_start|>"],
+    "default":  ["\nUser:", "\nAssistant:"],
 }
 
-def _detect_template(model_path: str) -> str:
-    # Try reading general.architecture from the GGUF header first — authoritative.
-    # Fall back to filename guessing if parsing fails (corrupted file, non-GGUF, etc.)
+def _detect_template(model_path: str) -> tuple:
+    """
+    Detect the chat template to use. Returns (template_key, stop_tokens, use_chat_api).
+    use_chat_api=True means the model has its own embedded template and we should
+    use create_chat_completion; False means we fall back to manual prompt building.
+
+    Detection order (most → least authoritative):
+      1. tokenizer.chat_template in GGUF header (Jinja source — most accurate)
+      2. general.architecture in GGUF header
+      3. Filename pattern matching (last resort)
+    """
+    mf("Detecting chat template...")
+
+    # ── 1. tokenizer.chat_template (the actual Jinja source) ─────────────────
     try:
         from gguf_parser import try_parse
         info = try_parse(model_path)
-        if info:
-            arch = str(info.metadata.get("general.architecture", "")).lower()
-            if "gemma" in arch:
-                return "gemma"
-            if arch in ("llama", "mistral", "mixtral", "falcon"):
-                return "llama"
-            if arch in ("qwen2", "qwen", "phi3", "phi"):
-                return "chatml"
-    except Exception:
-        pass
 
-    # Filename fallback
+        if info is None:
+            warn("Could not parse GGUF header — falling back to filename detection")
+        else:
+            jinja = info.metadata.get("tokenizer.chat_template", "")
+            arch  = str(info.metadata.get("general.architecture", "")).lower()
+
+            if jinja:
+                # Pattern-match the Jinja source to identify the format
+                key = _match_jinja_template(jinja)
+                if key:
+                    ok(f"Found [bold]tokenizer.chat_template[/bold] in header → [cyan]{key}[/cyan] format")
+                    ok("Using model's built-in template (most accurate)")
+                    return key, _STOP_TOKENS.get(key, []), True
+                else:
+                    warn(
+                        "Found tokenizer.chat_template but couldn't identify format\n"
+                        "  [dim]Outputs may include raw template tokens — this is a known limitation[/dim]"
+                    )
+                    # Still use the chat API — it'll apply the template even if we can't name it
+                    ok("Using model's built-in template (format unknown but applied automatically)")
+                    return "default", [], True
+
+            # ── 2. general.architecture ───────────────────────────────────────
+            if arch:
+                key = _arch_to_template(arch)
+                if key:
+                    warn(
+                        f"No chat template in header — using [bold]general.architecture[/bold]: "
+                        f"[cyan]{arch}[/cyan] → [cyan]{key}[/cyan]\n"
+                        "  [dim]Outputs may look slightly off if the fine-tune used a different format[/dim]"
+                    )
+                    return key, _STOP_TOKENS.get(key, []), False
+                else:
+                    warn(
+                        f"Unknown architecture [cyan]{arch}[/cyan] — no matching template\n"
+                        "  [dim]Using generic format. Expect raw stop tokens and formatting weirdness.[/dim]"
+                    )
+                    return "default", [], False
+            else:
+                warn("No architecture info in GGUF header")
+
+    except Exception as exc:
+        warn(f"Header parsing failed ({exc})")
+
+    # ── 3. Filename guessing ──────────────────────────────────────────────────
     name = model_path.lower()
-    if "gemma" in name:
+    key  = None
+    if "gemma"   in name:                                    key = "gemma"
+    elif "llama" in name or "mistral" in name or "mixtral" in name: key = "llama"
+    elif "qwen"  in name or "hermes"  in name or "openchat" in name: key = "chatml"
+
+    if key:
+        warn(
+            f"Guessing template from filename → [cyan]{key}[/cyan]\n"
+            "  [dim]This is a last resort. Rename your model or fix its GGUF metadata for better results.[/dim]"
+        )
+        return key, _STOP_TOKENS.get(key, []), False
+
+    warn(
+        "Could not detect chat template from header or filename\n"
+        "  [dim]Using generic User/Assistant format. Outputs will likely look wrong.[/dim]"
+    )
+    return "default", [], False
+
+
+def _match_jinja_template(jinja: str) -> Optional[str]:
+    """Identify a known template format from its Jinja source by scanning for marker tokens."""
+    j = jinja.lower()
+    # Gemma 4 uses <|turn> / <turn|>
+    if "<|turn>" in j or "<turn|>" in j:
+        return "gemma4"
+    # Gemma 1/2/3
+    if "<end_of_turn>" in j or "start_of_turn" in j:
         return "gemma"
-    if "llama" in name or "mistral" in name or "mixtral" in name:
+    # Llama 3+
+    if "<|eot_id|>" in j or "<|start_header_id|>" in j:
+        return "llama3"
+    # Llama 1/2 / Mistral
+    if "[inst]" in j or "[/inst]" in j:
         return "llama"
-    if "qwen" in name or "hermes" in name or "openchat" in name:
+    # ChatML (Qwen, Hermes, OpenChat, Phi-3, etc.)
+    if "<|im_end|>" in j or "<|im_start|>" in j:
         return "chatml"
-    return "default"
+    return None
+
+
+def _arch_to_template(arch: str) -> Optional[str]:
+    arch = arch.lower()
+    if arch == "gemma4":                                            return "gemma4"
+    if "gemma" in arch:                                            return "gemma"
+    if arch in ("llama", "mistral", "mixtral", "falcon", "starcoder"): return "llama"
+    if arch in ("qwen2", "qwen", "phi3", "phi", "yi"):             return "chatml"
+    return None
 
 
 def _build_prompt(history: list[dict], model_path: str = "", template_key: str = None) -> str:
