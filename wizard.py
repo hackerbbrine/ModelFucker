@@ -48,12 +48,15 @@ def pick_model_path(provided: Optional[str] = None) -> str:
         return provided
     if provided:
         err(f"File not found: [dim]{provided}[/dim]")
-    console.print("[dim]Enter the path to a .gguf model file.[/dim]")
-    while True:
-        path = Prompt.ask("[cyan]Model path[/cyan]").strip().strip('"')
-        if os.path.exists(path):
-            return path
-        err(f"Not found: [dim]{path}[/dim]")
+
+    # Offer the import UI when no path is given
+    from importer import run_import_ui
+    result = run_import_ui()
+    if result and result.exists():
+        return str(result)
+
+    err("No model selected.")
+    raise SystemExit(1)
 
 
 # ── Step 2: Action ────────────────────────────────────────────────────────────
