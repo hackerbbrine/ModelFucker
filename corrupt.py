@@ -381,23 +381,21 @@ def _worker_flip(args):
 # ── Chunked file read with progress bar ──────────────────────────────────────
 
 def _read_with_progress(path: str, skip: int, usable: int) -> np.ndarray:
-    """Read `usable` bytes starting at `skip`, showing a live MB/s progress bar."""
     buf  = np.empty(usable, dtype=np.uint8)
     done = 0
     t0   = time.time()
 
     with _progress(
         SpinnerColumn(),
-        TextColumn("[cyan]Reading file...[/cyan]"),
+        TextColumn("[cyan]Reading file[/cyan]"),
         BarColumn(bar_width=45),
         TaskProgressColumn(),
         TextColumn("•"),
         TextColumn("[dim]{task.fields[rate]}[/dim]"),
         TextColumn("•"),
         TimeRemainingColumn(),
-        transient=True,
     ) as prog:
-        task = prog.add_task("", total=usable, rate="")
+        task = prog.add_task("", total=usable, rate="-- MB/s")
         with open(path, "rb") as f:
             f.seek(skip)
             while done < usable:
@@ -411,6 +409,9 @@ def _read_with_progress(path: str, skip: int, usable: int) -> np.ndarray:
                 rate    = done / elapsed / 1024 / 1024 if elapsed > 0 else 0
                 prog.update(task, advance=n, rate=f"{rate:.0f} MB/s")
 
+    elapsed = time.time() - t0
+    avg_rate = usable / elapsed / 1024 / 1024 if elapsed > 0 else 0
+    ok(f"Read {fmt_bytes(usable)} in {elapsed:.2f}s ({avg_rate:.0f} MB/s)")
     return buf
 
 
@@ -495,14 +496,15 @@ def corrupt_model(
         raw = _read_with_progress(path, skip, usable)
         console.print()
 
+        t_gpu = time.time()
         with _progress(SpinnerColumn(),
-                       TextColumn("[cyan]Sending to GPU · applying pattern · receiving...[/cyan]"),
-                       transient=True) as prog:
+                       TextColumn("[cyan]Sending to GPU · running kernel · receiving...[/cyan]"),
+                       ) as prog:
             prog.add_task("", total=None)
             raw, total_flips, targeted_ops = _cupy_apply(
                 raw, intensity, seed, pattern, ranges, attention_mode, skip
             )
-        console.print()
+        ok(f"GPU kernel done in {time.time() - t_gpu:.3f}s")
 
         mf("Writing to disk...")
         with open(path, "r+b") as f:
@@ -515,14 +517,15 @@ def corrupt_model(
         raw = _read_with_progress(path, skip, usable)
         console.print()
 
+        t_gpu = time.time()
         with _progress(SpinnerColumn(),
-                       TextColumn("[cyan]Sending to GPU · applying pattern · receiving...[/cyan]"),
-                       transient=True) as prog:
+                       TextColumn("[cyan]Sending to GPU · running kernel · receiving...[/cyan]"),
+                       ) as prog:
             prog.add_task("", total=None)
             raw, total_flips, targeted_ops = _torch_apply(
                 raw, intensity, seed, pattern, ranges, attention_mode, skip
             )
-        console.print()
+        ok(f"GPU kernel done in {time.time() - t_gpu:.3f}s")
 
         mf("Writing to disk...")
         with open(path, "r+b") as f:
@@ -540,7 +543,7 @@ def corrupt_model(
 
         with _progress(
             SpinnerColumn(),
-            TextColumn("[cyan]Applying pattern...[/cyan]"),
+            TextColumn("[cyan]Applying pattern[/cyan]"),
             BarColumn(bar_width=45),
             TaskProgressColumn(),
             TextColumn("•"),
@@ -548,7 +551,6 @@ def corrupt_model(
             TextColumn("[dim]{task.fields[rate]}[/dim]"),
             TextColumn("•"),
             TimeRemainingColumn(),
-            transient=True,
         ) as prog:
             task = prog.add_task(
                 "",
