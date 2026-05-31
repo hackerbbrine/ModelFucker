@@ -1,6 +1,6 @@
 """
 inference.py — Ask a brain-damaged AI questions. It will try its best.
-The model is loaded, the weights are cursed, and we're all just along for the ride.
+The model is loaded, the weights are fucked, and we're all just along for the ride.
 """
 
 import time
