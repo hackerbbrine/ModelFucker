@@ -353,7 +353,7 @@ def run_chat(
 
         history.append({"role": "assistant", "content": response.strip()})
 
-    console.print(f"\n[cyan]◈ FIBERCORE — session ended ◈[/cyan]\n")
+    console.print(f"\n[cyan]◈ Hackerbbrine — session ended ◈[/cyan]\n")
     return history
 
 

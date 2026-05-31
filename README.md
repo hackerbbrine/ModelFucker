@@ -6,7 +6,7 @@
 ║        M O D E L   F U C K E R   v 3 . 0                      ║
 ║                                                               ║
 ║        by Hackerbbrine                                        ║
-║        "science requires sacrifice"                           ║
+║        by Hackerbbrine                                        ║
 ║           (I never said that)                                 ║
 ║                                                               ║
 ║                                                               ║
