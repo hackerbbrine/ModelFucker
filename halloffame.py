@@ -332,6 +332,13 @@ def _try_gh_cli_pr(
             if not os.path.isdir(repo_dir):
                 raise RuntimeError(f"Clone failed: {result.stderr}")
 
+            # Set git identity in the temp clone — global config may not exist
+            gh_user = subprocess.run(["gh", "api", "user", "--jq", ".login"],
+                                     capture_output=True, text=True).stdout.strip() or "hackerbbrine"
+            subprocess.run(["git", "config", "user.name", gh_user], cwd=repo_dir, check=True)
+            subprocess.run(["git", "config", "user.email", f"{gh_user}@users.noreply.github.com"],
+                           cwd=repo_dir, check=True)
+
             subprocess.run(["git", "checkout", "-b", branch],
                            cwd=repo_dir, capture_output=True, check=True)
 
