@@ -161,7 +161,8 @@ def main():
             temperature=args.temp,
         )
 
-    console.print(f"\n[cyan]We hope you liked your fucking experience[/cyan]\n")
+    from ui import _QUOTES
+    console.print(f"\n[cyan]{random.choice(_QUOTES)}[/cyan]\n")
 
 
 if __name__ == "__main__":

@@ -29,22 +29,42 @@ theme = Theme({
 
 console = Console(theme=theme, highlight=False, legacy_windows=False)
 
-_HEADER = (
-    "╔═══════════════════════════════════════════════════════════════╗\n"
-    "║                                                               ║\n"
-    "║   [bold white]M O D E L   F U C K E R   v 3 . 0[/bold white]  ║\n"
-    "║                                                               ║\n"
-    "║   [dim]by Hackerbbrine[/dim]                                  ║\n"
-    '║   [dim]"Fuck you models to hell and back"[/dim]               ║\n'
-    "║                                                               ║\n"
-    "║                                                               ║\n"
-    "╚═══════════════════════════════════════════════════════════════╝"
-)
+_QUOTES = [
+    "the weights were fine until you showed up.",
+    "llama.cpp did not consent to this.",
+    "your model called. it's not coming back.",
+    "bits don't grow back, you know.",
+    "technically still a language model.",
+    "the embeddings are fine. the embeddings are not fine.",
+    "gradient descent cannot save you now.",
+    "attention is all you need. you have none.",
+    "it's not broken, it's interpretable.",
+    "somewhere a researcher is crying and doesn't know why.",
+]
+
+_BOX_WIDTH = 63  # visible chars between the ║ characters
+
+def _header(quote: str) -> str:
+    padded = f'"{quote}"'
+    # 3 leading spaces + content + trailing spaces to fill box
+    quote_pad = max(0, _BOX_WIDTH - 3 - len(padded))
+    author_pad = max(0, _BOX_WIDTH - 3 - len("by Hackerbbrine"))
+    return (
+        "╔═══════════════════════════════════════════════════════════════╗\n"
+        "║                                                               ║\n"
+        "║   [bold white]M O D E L   F U C K E R   v 3 . 0[/bold white]                       ║\n"
+        "║                                                               ║\n"
+        f'║   [dim]by Hackerbbrine[/dim]{" " * author_pad}║\n'
+        f'║   [dim]{padded}[/dim]{" " * quote_pad}║\n'
+        "║                                                               ║\n"
+        "╚═══════════════════════════════════════════════════════════════╝"
+    )
 
 
 def print_header(backend: str = "CPU (pure)"):
+    import random
     workers = multiprocessing.cpu_count()
-    console.print(f"\n[cyan]{_HEADER}[/cyan]")
+    console.print(f"\n[cyan]{_header(random.choice(_QUOTES))}[/cyan]")
     console.print(
         f"  Backend: [bold]{backend}[/bold]   "
         f"Workers: [bold]{workers}[/bold] cores available\n"
