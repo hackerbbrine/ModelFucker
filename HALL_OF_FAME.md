@@ -5,7 +5,6 @@
 
 ---
 
-*No entries yet. Be the first.*
 
 ## [gemma-4-E2B-it-Q4_K_M] — Intensity 1024
 **Submitted by:** @hackerbbrine
