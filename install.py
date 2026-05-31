@@ -260,35 +260,42 @@ def main():
 
     # ── llama-cpp-python ──────────────────────────────────────────────────────
     header("Building llama-cpp-python (this takes 5–15 minutes)")
-    if gpu.kind != "cpu":
-        info(f"CMAKE_ARGS = {llama_env(gpu).get('CMAKE_ARGS', '')}")
-    info("Building from source...")
 
-    env = llama_env(gpu)
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install",
-         "llama-cpp-python", "--upgrade", "--force-reinstall", "--no-cache-dir"],
-        env=env,
-        check=False,
-    )
+    llama_cmd = [sys.executable, "-m", "pip", "install",
+                 "llama-cpp-python", "--upgrade", "--force-reinstall", "--no-cache-dir"]
+
+    if gpu.kind != "cpu":
+        env = llama_env(gpu)
+        info(f"CMAKE_ARGS = {env.get('CMAKE_ARGS', '')}")
+        info("Attempting GPU build (ROCm/CUDA)...")
+        result = subprocess.run(llama_cmd, env=env, check=False)
+    else:
+        result = subprocess.run(llama_cmd, check=False)
+
     if result.returncode == 0:
         ok("llama-cpp-python built and installed")
         if gpu.kind != "cpu":
             ok("GPU inference support compiled in")
     else:
-        err("llama-cpp-python build failed")
-        if gpu.kind == "amd":
+        warn("GPU build failed — trying Vulkan fallback (works on AMD/NVIDIA without ROCm/CUDA SDK)...")
+        vulkan_env = os.environ.copy()
+        vulkan_env["CMAKE_ARGS"] = "-DGGML_VULKAN=ON"
+        result2 = subprocess.run(llama_cmd, env=vulkan_env, check=False)
+        if result2.returncode == 0:
+            ok("llama-cpp-python built with Vulkan support")
+            ok("GPU inference will use Vulkan (slightly slower than ROCm/CUDA but much faster than CPU)")
+        else:
+            warn("Vulkan build also failed — falling back to CPU-only build")
+            subprocess.run(llama_cmd, check=False)
             print()
-            print("  Possible fixes:")
-            print("  1. Make sure ROCm is installed: https://rocm.docs.amd.com")
-            print("  2. Make sure HIP SDK is in PATH")
-            print(f"  3. Verify your GFX target: hipconfig --amdgputarget")
-            print("  4. Try CPU-only: pip install llama-cpp-python")
-        elif gpu.kind == "nvidia":
-            print()
-            print("  Possible fixes:")
-            print("  1. Make sure CUDA toolkit is installed")
-            print("  2. Try CPU-only: pip install llama-cpp-python")
+            if gpu.kind == "amd":
+                print("  To enable GPU inference manually:")
+                print("  ROCm:   CMAKE_ARGS=\"-DGGML_HIPBLAS=ON\" pip install llama-cpp-python --force-reinstall")
+                print("  Vulkan: CMAKE_ARGS=\"-DGGML_VULKAN=ON\" pip install llama-cpp-python --force-reinstall")
+            elif gpu.kind == "nvidia":
+                print("  To enable GPU inference manually:")
+                print("  CUDA:   CMAKE_ARGS=\"-DGGML_CUDA=ON\" pip install llama-cpp-python --force-reinstall")
+                print("  Vulkan: CMAKE_ARGS=\"-DGGML_VULKAN=ON\" pip install llama-cpp-python --force-reinstall")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     header("Done")
