@@ -86,7 +86,7 @@ def main():
     # ── Restore mode ──────────────────────────────────────────────────────────
     if args.restore:
         restore_backup(path)
-        console.print(f"\n[cyan]◈ FIBERCORE — model restored ◈[/cyan]\n")
+        console.print(f"\n[cyan]model restored ◈[/cyan]\n")
         return
 
     # ── Corruption pass ───────────────────────────────────────────────────────
@@ -136,7 +136,7 @@ def main():
                 temperature=args.temp,
             )
 
-    console.print(f"\n[cyan]◈ FIBERCORE — science requires sacrifice ◈[/cyan]\n")
+    console.print(f"\n[cyan]We hope you liked your fucking experience[/cyan]\n")
 
 
 if __name__ == "__main__":
