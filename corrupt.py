@@ -10,7 +10,9 @@ import random
 import shutil
 import multiprocessing
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
+from typing import Optional
 
 try:
     import numpy as np
@@ -27,6 +29,19 @@ except ImportError:
 from ui import console, fmt_bytes, ok, warn, err, mf, corruption_info_table, corruption_stats_table
 
 
+class CorruptPattern(Enum):
+    RANDOM  = "random"    # random bit flip — unpredictable chaos
+    PATTERN = "pattern"   # same bit (bit 3) every time — structured decay
+    ZEROS   = "zeros"     # zero out bytes — erase instead of flip
+    MIXTURE = "mixture"   # 50% random flips, 50% zeroed bytes
+
+
+class AttentionMode(Enum):
+    IGNORE  = "ignore"    # don't care about attention tensors
+    PROTECT = "protect"   # skip attention tensors — corrupt everything else
+    TARGET  = "target"    # ONLY corrupt attention tensors
+
+
 @dataclass
 class CorruptionResult:
     path: str
@@ -38,15 +53,14 @@ class CorruptionResult:
     elapsed: float
     mb_per_sec: float
     dry_run: bool = False
+    pattern: CorruptPattern = CorruptPattern.RANDOM
+    attention_mode: AttentionMode = AttentionMode.IGNORE
 
     @property
     def impact_label(self) -> str:
-        if self.intensity >= 1024:
-            return "LIGHT"
-        elif self.intensity >= 256:
-            return "MODERATE"
-        elif self.intensity >= 64:
-            return "HEAVY"
+        if self.intensity >= 1024: return "LIGHT"
+        if self.intensity >= 256:  return "MODERATE"
+        if self.intensity >= 64:   return "HEAVY"
         return "CATASTROPHIC"
 
     @property
@@ -54,54 +68,149 @@ class CorruptionResult:
         return self.total_flips / max(self.usable_bytes / 1024 / 1024, 0.001)
 
 
-# ── Worker must be at module level so multiprocessing can pickle it ──────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _filter_positions(positions: "np.ndarray", ranges: list, data_start: int) -> "np.ndarray":
+    """Remove positions that fall inside any of the given absolute byte ranges."""
+    if not ranges:
+        return positions
+    mask = np.ones(len(positions), dtype=bool)
+    for abs_start, abs_end in ranges:
+        rel_start = max(0, abs_start - data_start)
+        rel_end   = max(0, abs_end   - data_start)
+        mask &= ~((positions >= rel_start) & (positions < rel_end))
+    return positions[mask]
+
+
+def _only_positions(positions: "np.ndarray", ranges: list, data_start: int) -> "np.ndarray":
+    """Keep ONLY positions that fall inside one of the given absolute byte ranges."""
+    if not ranges:
+        return np.array([], dtype=positions.dtype)
+    mask = np.zeros(len(positions), dtype=bool)
+    for abs_start, abs_end in ranges:
+        rel_start = max(0, abs_start - data_start)
+        rel_end   = max(0, abs_end   - data_start)
+        mask |= (positions >= rel_start) & (positions < rel_end)
+    return positions[mask]
+
+
+def _apply_pattern(
+    data: "np.ndarray",
+    positions: "np.ndarray",
+    pattern: CorruptPattern,
+    rng,
+) -> int:
+    if len(positions) == 0:
+        return 0
+    if pattern == CorruptPattern.ZEROS:
+        data[positions] = np.uint8(0)
+    elif pattern == CorruptPattern.PATTERN:
+        data[positions] ^= np.uint8(0x08)   # always bit 3
+    elif pattern == CorruptPattern.MIXTURE:
+        idx = rng.permutation(len(positions))
+        half = len(positions) // 2
+        rand_pos = positions[idx[:half]]
+        zero_pos = positions[idx[half:]]
+        bits = rng.integers(0, 8, size=len(rand_pos), dtype=np.uint8)
+        data[rand_pos] ^= (np.uint8(1) << bits).astype(np.uint8)
+        data[zero_pos] = np.uint8(0)
+    else:  # RANDOM
+        bits = rng.integers(0, 8, size=len(positions), dtype=np.uint8)
+        data[positions] ^= (np.uint8(1) << bits).astype(np.uint8)
+    return len(positions)
+
+
+# ── Multiprocessing worker (module-level for pickling) ────────────────────────
+
 def _worker_flip(args):
-    path, chunk_start, chunk_end, intensity, seed, skip = args
+    path, chunk_start, chunk_end, intensity, seed, skip, pattern_val = args
     rng = random.Random(seed)
+    pattern = CorruptPattern(pattern_val)
 
     with open(path, "rb") as f:
         f.seek(chunk_start)
         data = bytearray(f.read(chunk_end - chunk_start))
 
     global_start = chunk_start - skip
-    first_local = (intensity - (global_start % intensity)) % intensity
+    first_local  = (intensity - (global_start % intensity)) % intensity
     pos = first_local
     flips = 0
 
     while pos < len(data):
-        bit = rng.randint(0, 7)
-        data[pos] ^= (1 << bit)
+        if pattern == CorruptPattern.ZEROS:
+            data[pos] = 0
+        elif pattern == CorruptPattern.PATTERN:
+            data[pos] ^= 0x08
+        elif pattern == CorruptPattern.MIXTURE:
+            if rng.random() < 0.5:
+                data[pos] ^= (1 << rng.randint(0, 7))
+            else:
+                data[pos] = 0
+        else:
+            data[pos] ^= (1 << rng.randint(0, 7))
         flips += 1
         pos += intensity
 
     return (chunk_start, bytes(data), flips)
 
 
-def _numpy_flip(data: "np.ndarray", intensity: int, seed: int) -> int:
+# ── Core flip functions ────────────────────────────────────────────────────────
+
+def _numpy_flip(
+    data: "np.ndarray",
+    intensity: int,
+    seed: int,
+    pattern: CorruptPattern,
+    attention_ranges: list,
+    attention_mode: AttentionMode,
+    data_start: int,
+) -> int:
     rng = np.random.default_rng(seed)
     positions = np.arange(0, len(data), intensity)
-    bits = rng.integers(0, 8, size=len(positions), dtype=np.uint8)
-    masks = (np.uint8(1) << bits).astype(np.uint8)
-    data[positions] ^= masks
-    return len(positions)
+
+    if attention_ranges:
+        if attention_mode == AttentionMode.PROTECT:
+            positions = _filter_positions(positions, attention_ranges, data_start)
+        elif attention_mode == AttentionMode.TARGET:
+            positions = _only_positions(positions, attention_ranges, data_start)
+
+    return _apply_pattern(data, positions, pattern, rng)
 
 
-def _cupy_flip(data: "np.ndarray", intensity: int, seed: int):
+def _cupy_flip(
+    data: "np.ndarray",
+    intensity: int,
+    seed: int,
+    pattern: CorruptPattern,
+) -> tuple:
     cp.random.seed(seed)
     positions = cp.arange(0, len(data), intensity)
-    bits = cp.random.randint(0, 8, size=len(positions), dtype=cp.uint8)
-    masks = (cp.uint8(1) << bits).astype(cp.uint8)
-    gpu_data = cp.array(data)
-    gpu_data[positions] ^= masks
-    result = cp.asnumpy(gpu_data)
-    return result, len(positions)
 
+    if pattern == CorruptPattern.ZEROS:
+        gpu = cp.array(data)
+        gpu[positions] = cp.uint8(0)
+    elif pattern == CorruptPattern.PATTERN:
+        gpu = cp.array(data)
+        gpu[positions] ^= cp.uint8(0x08)
+    elif pattern == CorruptPattern.MIXTURE:
+        gpu = cp.array(data)
+        bits = cp.random.randint(0, 8, size=len(positions), dtype=cp.uint8)
+        half = len(positions) // 2
+        gpu[positions[:half]] ^= (cp.uint8(1) << bits[:half]).astype(cp.uint8)
+        gpu[positions[half:]] = cp.uint8(0)
+    else:
+        bits = cp.random.randint(0, 8, size=len(positions), dtype=cp.uint8)
+        gpu = cp.array(data)
+        gpu[positions] ^= (cp.uint8(1) << bits).astype(cp.uint8)
+
+    return cp.asnumpy(gpu), int(len(positions))
+
+
+# ── Public API ─────────────────────────────────────────────────────────────────
 
 def backend_label() -> str:
-    if HAS_CUPY:
-        return "GPU (CuPy)"
-    if HAS_NUMPY:
-        return "CPU (NumPy)"
+    if HAS_CUPY:  return "GPU (CuPy)"
+    if HAS_NUMPY: return "CPU (NumPy)"
     return "CPU (pure)"
 
 
@@ -134,20 +243,29 @@ def corrupt_model(
     dry_run: bool,
     show_stats: bool,
     workers: int,
+    pattern: CorruptPattern = CorruptPattern.RANDOM,
+    attention_mode: AttentionMode = AttentionMode.IGNORE,
+    attention_ranges: Optional[list] = None,
 ) -> CorruptionResult:
-    size = os.path.getsize(path)
+    size   = os.path.getsize(path)
     usable = size - skip
 
     if usable <= 0:
         err(f"Skip ({fmt_bytes(skip)}) >= file size ({fmt_bytes(size)}) — nothing to corrupt")
         sys.exit(1)
-
     if intensity < 1:
-        err(f"Intensity must be >= 1 (got {intensity}) — what are you even trying to do")
+        err(f"Intensity must be >= 1 (got {intensity})")
         sys.exit(1)
 
+    ranges = attention_ranges or []
     est_flips = usable // intensity
     corruption_info_table(path, size, skip, intensity, seed, est_flips, dry_run)
+
+    # Show extra context for pattern / attention mode
+    if pattern != CorruptPattern.RANDOM:
+        mf(f"Pattern: [bold magenta]{pattern.value}[/bold magenta]")
+    if attention_mode != AttentionMode.IGNORE and ranges:
+        mf(f"Attention: [bold yellow]{attention_mode.value}[/bold yellow] ({len(ranges)} tensor ranges)")
 
     t0 = time.time()
     total_flips = 0
@@ -158,38 +276,33 @@ def corrupt_model(
         time.sleep(0.2)
 
     elif HAS_CUPY:
-        mf("[green]GPU acceleration engaged (CuPy) — overkill but we respect it[/green]")
-        mf("Reading file into GPU memory...")
+        mf("[green]GPU acceleration (CuPy)[/green]")
+        mf("Reading into GPU memory...")
         with open(path, "rb") as f:
             f.seek(skip)
             raw = np.frombuffer(f.read(usable), dtype=np.uint8).copy()
-
-        mf("Flipping bits on GPU...")
-        modified, total_flips = _cupy_flip(raw, intensity, seed)
-
-        mf("Writing corrupted weights to disk...")
+        mf("Applying pattern on GPU...")
+        modified, total_flips = _cupy_flip(raw, intensity, seed, pattern)
+        mf("Writing to disk...")
         with open(path, "r+b") as f:
             f.seek(skip)
             f.write(modified.tobytes())
 
     elif HAS_NUMPY:
-        mf("[cyan]NumPy vectorized backend — fast enough[/cyan]")
-        mf("Reading file into memory...")
+        mf("[cyan]NumPy vectorized backend[/cyan]")
+        mf("Reading into memory...")
         with open(path, "rb") as f:
             f.seek(skip)
             raw = np.frombuffer(f.read(usable), dtype=np.uint8).copy()
-
-        mf("Flipping bits...")
-        total_flips = _numpy_flip(raw, intensity, seed)
-
-        mf("Writing corrupted weights to disk...")
+        mf("Applying pattern...")
+        total_flips = _numpy_flip(raw, intensity, seed, pattern, ranges, attention_mode, skip)
+        mf("Writing to disk...")
         with open(path, "r+b") as f:
             f.seek(skip)
             f.write(raw.tobytes())
 
     else:
-        # Multiprocessing fallback — still gets the job done
-        mf(f"[yellow]Multiprocessing fallback ({workers} workers) — numpy would be faster[/yellow]")
+        mf(f"[yellow]Multiprocessing fallback ({workers} workers)[/yellow]")
         chunk_size = usable // workers
         chunks = [
             (
@@ -199,42 +312,36 @@ def corrupt_model(
                 intensity,
                 seed + i,
                 skip,
+                pattern.value,
             )
             for i in range(workers)
         ]
-
         results = []
         mf("Chewing through chunks...")
         with multiprocessing.Pool(workers) as pool:
             for result in pool.imap_unordered(_worker_flip, chunks):
                 results.append(result)
-
-        mf("Writing chunks back to disk...")
+        mf("Writing chunks to disk...")
         with open(path, "r+b") as f:
             for chunk_start, data, flips in sorted(results, key=lambda x: x[0]):
-                    f.seek(chunk_start)
-                    f.write(data)
-                    total_flips += flips
+                f.seek(chunk_start)
+                f.write(data)
+                total_flips += flips
 
-    elapsed = time.time() - t0
+    elapsed    = time.time() - t0
     mb_per_sec = (size / 1024 / 1024) / elapsed if elapsed > 0 else 0
 
     result = CorruptionResult(
-        path=path,
-        intensity=intensity,
-        skip=skip,
-        seed=seed,
-        total_flips=total_flips,
-        usable_bytes=usable,
-        elapsed=elapsed,
-        mb_per_sec=mb_per_sec,
-        dry_run=dry_run,
+        path=path, intensity=intensity, skip=skip, seed=seed,
+        total_flips=total_flips, usable_bytes=usable,
+        elapsed=elapsed, mb_per_sec=mb_per_sec, dry_run=dry_run,
+        pattern=pattern, attention_mode=attention_mode,
     )
 
     console.print()
     ok(f"Done in {elapsed:.2f}s ({mb_per_sec:.0f} MB/s)")
-    ok(f"{total_flips:,} bits flipped")
-    ok(f"~{fmt_bytes(total_flips * intensity)} of weights are now vibes")
+    ok(f"{total_flips:,} operations applied  [{pattern.value}]")
+    ok(f"~{fmt_bytes(total_flips * intensity)} of weights affected")
 
     if show_stats:
         corruption_stats_table(total_flips, intensity, usable, elapsed, mb_per_sec)

@@ -316,23 +316,31 @@ def run_chat(
                 continue
 
             elif cmd == "/corrupt":
+                from corrupt import CorruptPattern, AttentionMode
+                from wizard import pick_fuckery_level, pick_pattern, pick_attention_mode, pick_seed
+
                 parts = user_input.split()
                 if len(parts) > 1:
                     try:
                         new_intensity = int(parts[1])
+                        new_pattern   = CorruptPattern.RANDOM
+                        new_attn_mode = AttentionMode.IGNORE
+                        new_attn_ranges = []
+                        new_seed = random.randint(0, 999_999)
                     except ValueError:
                         err("Usage: /corrupt [intensity]")
                         continue
                 else:
-                    raw = Prompt.ask("[cyan]Intensity (bytes per flip)[/cyan]", default="256")
-                    try:
-                        new_intensity = int(raw)
-                    except ValueError:
-                        err("That's not a number. Science requires numbers.")
+                    # Mini wizard for in-chat corruption
+                    new_intensity   = pick_fuckery_level()
+                    if new_intensity is None:
+                        warn("No corruption selected.")
                         continue
+                    new_pattern     = pick_pattern()
+                    new_attn_mode, new_attn_ranges = pick_attention_mode(model_path)
+                    new_seed        = pick_seed()
 
-                new_seed = random.randint(0, 999999)
-                session.unload()      # release mmap before writing on Windows
+                session.unload()
                 result = corrupt_model(
                     path=model_path,
                     intensity=new_intensity,
@@ -341,10 +349,13 @@ def run_chat(
                     dry_run=False,
                     show_stats=True,
                     workers=workers,
+                    pattern=new_pattern,
+                    attention_mode=new_attn_mode,
+                    attention_ranges=new_attn_ranges,
                 )
                 corruption_passes.append(result)
                 session.reload()
-                pt_session = _make_prompt_session()  # fresh console handle after reload
+                pt_session = _make_prompt_session()
                 continue
 
             elif cmd == "/submit":

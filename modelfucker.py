@@ -87,13 +87,12 @@ def main():
         console.print(f"\n[cyan]model restored ◈[/cyan]\n")
         return
 
+    from corrupt import CorruptPattern, AttentionMode
+
     # ── Choose wizard vs direct CLI ───────────────────────────────────────────
-    # Wizard runs when no --intensity is explicitly passed (interactive mode).
-    # Passing --intensity bypasses the wizard for scripted/automated use.
     cli_mode = args.intensity != 1024 or args.seed is not None or args.dry_run
 
     if cli_mode:
-        # ── Legacy CLI path ───────────────────────────────────────────────────
         path = args.model
         if not path:
             err("Model path required in CLI mode")
@@ -101,19 +100,35 @@ def main():
         if not os.path.exists(path):
             err(f"File not found: {path}")
             sys.exit(1)
-        seed = args.seed if args.seed is not None else random.randint(0, 999_999)
-        intensity = args.intensity
-        dry_run = args.dry_run
+        seed             = args.seed if args.seed is not None else random.randint(0, 999_999)
+        intensity        = args.intensity
+        dry_run          = args.dry_run
+        pattern          = CorruptPattern.RANDOM
+        attention_mode   = AttentionMode.IGNORE
+        attention_ranges = []
+        action           = "corrupt"
     else:
-        # ── Interactive wizard ────────────────────────────────────────────────
         from wizard import run_wizard
-        path, intensity, seed = run_wizard(model_path=args.model)
-        dry_run = False
+        w = run_wizard(model_path=args.model)
+        action           = w["action"]
+        path             = w["model_path"]
+        intensity        = w.get("intensity")
+        pattern          = w.get("pattern",          CorruptPattern.RANDOM)
+        attention_mode   = w.get("attention_mode",   AttentionMode.IGNORE)
+        attention_ranges = w.get("attention_ranges", [])
+        seed             = w.get("seed",             random.randint(0, 999_999))
+        dry_run          = False
+
+    # ── Restore ───────────────────────────────────────────────────────────────
+    if action == "restore":
+        restore_backup(path)
+        console.print(f"\n[cyan]model restored ◈[/cyan]\n")
+        return
 
     # ── Corruption pass ───────────────────────────────────────────────────────
     corruption_passes = []
 
-    if intensity is not None and not dry_run:
+    if action == "corrupt" and intensity is not None and not dry_run:
         make_backup(path)
         console.print()
         result = corrupt_model(
@@ -124,6 +139,9 @@ def main():
             dry_run=False,
             show_stats=args.stats,
             workers=args.workers,
+            pattern=pattern,
+            attention_mode=attention_mode,
+            attention_ranges=attention_ranges,
         )
         corruption_passes.append(result)
         console.print(f"\n[dim]  Restore: python modelfucker.py \"{path}\" --restore[/dim]")
