@@ -172,24 +172,51 @@ class InferenceSession:
         self._load()
 
     def _load(self):
+        from corrupt import _GPU
         mf(f"Loading [bold]{self.model_path}[/bold] — this takes a sec, grab a coffee...")
         t0 = time.time()
 
-        # llama.cpp mutates Windows console modes on init/teardown, which breaks
-        # prompt_toolkit's GetConsoleScreenBufferInfo. Save all three handles and
-        # restore them after loading so the terminal stays usable.
+        # Attempt GPU inference if a GPU backend is detected.
+        # Falls back to CPU if llama-cpp-python wasn't compiled with GPU support.
+        use_gpu_layers = _GPU.backend != "cpu"
+        gpu_loaded     = False
+
         _console_state = _save_win32_console()
         try:
-            self.llm = Llama(
-                model_path=self.model_path,
-                n_ctx=self.n_ctx,
-                n_threads=self.n_threads,
-                verbose=False,
-            )
+            if use_gpu_layers:
+                try:
+                    self.llm = Llama(
+                        model_path=self.model_path,
+                        n_ctx=self.n_ctx,
+                        n_threads=self.n_threads,
+                        n_gpu_layers=-1,
+                        verbose=False,
+                    )
+                    gpu_loaded = True
+                except Exception:
+                    # llama-cpp-python not compiled with GPU support — fall back
+                    self.llm = Llama(
+                        model_path=self.model_path,
+                        n_ctx=self.n_ctx,
+                        n_threads=self.n_threads,
+                        verbose=False,
+                    )
+            else:
+                self.llm = Llama(
+                    model_path=self.model_path,
+                    n_ctx=self.n_ctx,
+                    n_threads=self.n_threads,
+                    verbose=False,
+                )
         finally:
             _restore_win32_console(_console_state)
 
-        ok(f"Model loaded in {time.time() - t0:.1f}s")
+        elapsed = time.time() - t0
+        if gpu_loaded:
+            ok(f"Model loaded in {elapsed:.1f}s — [green]GPU inference active[/green]")
+        else:
+            ok(f"Model loaded in {elapsed:.1f}s — [yellow]CPU inference[/yellow]"
+               + (" (reinstall llama-cpp-python with GPU support for faster inference)" if use_gpu_layers else ""))
 
     def unload(self):
         """Release the mmap'd file handle — required on Windows before overwriting the file."""
