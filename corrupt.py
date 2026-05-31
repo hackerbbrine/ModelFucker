@@ -276,72 +276,198 @@ def _numpy_apply(
     return total, targeted
 
 
+# ── GPU transfer chunk size (128MB gives smooth PCIe progress) ────────────────
+_GPU_XFER_CHUNK = 128 * 1024 * 1024
+_GPU_OPS_CHUNK  = 5_000_000   # positions per kernel progress tick
+
+
+def _progress_xfer(label: str, total_bytes: int):
+    return _progress(
+        SpinnerColumn(),
+        TextColumn(f"[cyan]{label}[/cyan]"),
+        BarColumn(bar_width=40),
+        TaskProgressColumn(),
+        TextColumn("•"),
+        TextColumn("[dim]{task.fields[rate]}[/dim]"),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+    ), total_bytes
+
+
+def _progress_ops(total_ops: int):
+    return _progress(
+        SpinnerColumn(),
+        TextColumn("[cyan]Kernel[/cyan]"),
+        BarColumn(bar_width=40),
+        TaskProgressColumn(),
+        TextColumn("•"),
+        TextColumn("[yellow]{task.fields[ops]}[/yellow]"),
+        TextColumn("•"),
+        TextColumn("[dim]{task.fields[rate]}[/dim]"),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+    ), total_ops
+
+
 # ── CuPy GPU apply ────────────────────────────────────────────────────────────
 
 def _cupy_apply(data_np, intensity, seed, pattern, attn_ranges, attn_mode, data_start):
-    cp = _GPU.lib
+    cp   = _GPU.lib
+    n    = len(data_np)
 
-    all_pos_np  = np.arange(0, len(data_np), intensity)
+    all_pos_np  = np.arange(0, n, intensity)
     work_pos_np = _apply_attn_filter(all_pos_np, attn_ranges, attn_mode, data_start)
-
     total    = len(all_pos_np)
     targeted = len(work_pos_np)
 
+    # ── Transfer to GPU ───────────────────────────────────────────────────────
+    t0 = time.time()
+    prog_ctx, _ = _progress_xfer("→ GPU", n)
+    gpu = cp.empty(n, dtype=cp.uint8)
+    with prog_ctx as prog:
+        task = prog.add_task("", total=n, rate="-- GB/s")
+        done = 0
+        while done < n:
+            sz = min(_GPU_XFER_CHUNK, n - done)
+            gpu[done:done+sz] = cp.array(data_np[done:done+sz])
+            done += sz
+            rate = done / (time.time() - t0) / 1024**3
+            prog.update(task, advance=sz, rate=f"{rate:.1f} GB/s")
+    ok(f"→ GPU  {n/1024**3:.1f} GB in {time.time()-t0:.2f}s  ({n/(time.time()-t0)/1024**3:.1f} GB/s)")
+
+    # ── Pre-generate masks ────────────────────────────────────────────────────
     cp.random.seed(seed)
-    gpu      = cp.array(data_np)
-    pos      = cp.array(work_pos_np)
-
-    if pattern == CorruptPattern.ZEROS:
-        gpu[pos] = cp.uint8(0)
-    elif pattern == CorruptPattern.PATTERN:
-        gpu[pos] ^= cp.uint8(0x08)
-    elif pattern == CorruptPattern.MIXTURE:
-        bits = cp.random.randint(0, 8, size=len(pos), dtype=cp.uint8)
+    pos = cp.array(work_pos_np)
+    if pattern in (CorruptPattern.RANDOM, CorruptPattern.MIXTURE):
+        bits  = cp.random.randint(0, 8, size=len(pos), dtype=cp.uint8)
         masks = (cp.uint8(1) << bits).astype(cp.uint8)
-        half = len(pos) // 2
-        gpu[pos[:half]] ^= masks[:half]
-        gpu[pos[half:]] = cp.uint8(0)
     else:
-        bits = cp.random.randint(0, 8, size=len(pos), dtype=cp.uint8)
-        masks = (cp.uint8(1) << bits).astype(cp.uint8)
-        gpu[pos] ^= masks
+        masks = None
 
-    return cp.asnumpy(gpu), total, targeted
+    # ── Kernel in chunks ──────────────────────────────────────────────────────
+    t0 = time.time()
+    prog_ctx, _ = _progress_ops(targeted)
+    with prog_ctx as prog:
+        task = prog.add_task("", total=targeted, ops="0 ops", rate="-- Gops/s")
+        done = 0
+        for i in range(0, targeted, _GPU_OPS_CHUNK):
+            sl = slice(i, i + _GPU_OPS_CHUNK)
+            pc = pos[sl]
+            if pattern == CorruptPattern.ZEROS:
+                gpu[pc] = cp.uint8(0)
+            elif pattern == CorruptPattern.PATTERN:
+                gpu[pc] ^= cp.uint8(0x08)
+            elif pattern == CorruptPattern.MIXTURE:
+                half = len(pc) // 2
+                gpu[pc[:half]] ^= masks[sl][:half]
+                gpu[pc[half:]] = cp.uint8(0)
+            else:
+                gpu[pc] ^= masks[sl]
+            cp.cuda.Stream.null.synchronize()
+            done += len(pc)
+            elapsed = time.time() - t0
+            rate = done / elapsed / 1e9 if elapsed > 0 else 0
+            prog.update(task, advance=len(pc),
+                        ops=f"{done:,} ops", rate=f"{rate:.2f} Gops/s")
+    ok(f"Kernel  {targeted:,} ops in {time.time()-t0:.3f}s  ({targeted/(time.time()-t0)/1e9:.2f} Gops/s)")
+
+    # ── Transfer back ─────────────────────────────────────────────────────────
+    t0 = time.time()
+    result = np.empty(n, dtype=np.uint8)
+    prog_ctx, _ = _progress_xfer("← CPU", n)
+    with prog_ctx as prog:
+        task = prog.add_task("", total=n, rate="-- GB/s")
+        done = 0
+        while done < n:
+            sz = min(_GPU_XFER_CHUNK, n - done)
+            result[done:done+sz] = cp.asnumpy(gpu[done:done+sz])
+            done += sz
+            rate = done / (time.time() - t0) / 1024**3
+            prog.update(task, advance=sz, rate=f"{rate:.1f} GB/s")
+    ok(f"← CPU  {n/1024**3:.1f} GB in {time.time()-t0:.2f}s  ({n/(time.time()-t0)/1024**3:.1f} GB/s)")
+
+    return result, total, targeted
 
 
 # ── PyTorch GPU apply (CUDA + ROCm) ──────────────────────────────────────────
 
 def _torch_apply(data_np, intensity, seed, pattern, attn_ranges, attn_mode, data_start):
-    torch = _GPU.lib
+    torch  = _GPU.lib
+    device = torch.device("cuda")
+    n      = len(data_np)
 
-    all_pos_np  = np.arange(0, len(data_np), intensity)
+    all_pos_np  = np.arange(0, n, intensity)
     work_pos_np = _apply_attn_filter(all_pos_np, attn_ranges, attn_mode, data_start)
-
     total    = len(all_pos_np)
     targeted = len(work_pos_np)
 
-    device = torch.device("cuda")
-    gen    = torch.Generator(device=device).manual_seed(seed)
+    # ── Transfer to GPU ───────────────────────────────────────────────────────
+    t0 = time.time()
+    gpu = torch.empty(n, dtype=torch.uint8, device=device)
+    prog_ctx, _ = _progress_xfer("→ GPU", n)
+    with prog_ctx as prog:
+        task = prog.add_task("", total=n, rate="-- GB/s")
+        done = 0
+        while done < n:
+            sz = min(_GPU_XFER_CHUNK, n - done)
+            gpu[done:done+sz] = torch.from_numpy(data_np[done:done+sz]).to(device)
+            done += sz
+            rate = done / (time.time() - t0) / 1024**3
+            prog.update(task, advance=sz, rate=f"{rate:.1f} GB/s")
+    ok(f"→ GPU  {n/1024**3:.1f} GB in {time.time()-t0:.2f}s  ({n/(time.time()-t0)/1024**3:.1f} GB/s)")
 
-    data = torch.from_numpy(data_np.copy()).to(device)
-    pos  = torch.from_numpy(work_pos_np).to(device)
-
-    if pattern == CorruptPattern.ZEROS:
-        data[pos] = 0
-    elif pattern == CorruptPattern.PATTERN:
-        data[pos] ^= torch.tensor(0x08, dtype=torch.uint8, device=device)
-    elif pattern == CorruptPattern.MIXTURE:
+    # ── Pre-generate masks ────────────────────────────────────────────────────
+    gen = torch.Generator(device=device).manual_seed(seed)
+    pos = torch.from_numpy(work_pos_np).to(device)
+    if pattern in (CorruptPattern.RANDOM, CorruptPattern.MIXTURE):
         bits  = torch.randint(0, 8, (len(pos),), device=device, generator=gen, dtype=torch.uint8)
         masks = torch.tensor(1, dtype=torch.uint8, device=device) << bits
-        half  = len(pos) // 2
-        data[pos[:half]] ^= masks[:half]
-        data[pos[half:]] = 0
     else:
-        bits  = torch.randint(0, 8, (len(pos),), device=device, generator=gen, dtype=torch.uint8)
-        masks = torch.tensor(1, dtype=torch.uint8, device=device) << bits
-        data[pos] ^= masks
+        masks = None
 
-    return data.cpu().numpy(), total, targeted
+    # ── Kernel in chunks ──────────────────────────────────────────────────────
+    t0 = time.time()
+    prog_ctx, _ = _progress_ops(targeted)
+    with prog_ctx as prog:
+        task = prog.add_task("", total=targeted, ops="0 ops", rate="-- Gops/s")
+        done = 0
+        for i in range(0, targeted, _GPU_OPS_CHUNK):
+            sl = slice(i, i + _GPU_OPS_CHUNK)
+            pc = pos[sl]
+            if pattern == CorruptPattern.ZEROS:
+                gpu[pc] = 0
+            elif pattern == CorruptPattern.PATTERN:
+                gpu[pc] ^= torch.tensor(0x08, dtype=torch.uint8, device=device)
+            elif pattern == CorruptPattern.MIXTURE:
+                half = len(pc) // 2
+                gpu[pc[:half]] ^= masks[sl][:half]
+                gpu[pc[half:]] = 0
+            else:
+                gpu[pc] ^= masks[sl]
+            torch.cuda.synchronize()
+            done += len(pc)
+            elapsed = time.time() - t0
+            rate = done / elapsed / 1e9 if elapsed > 0 else 0
+            prog.update(task, advance=len(pc),
+                        ops=f"{done:,} ops", rate=f"{rate:.2f} Gops/s")
+    ok(f"Kernel  {targeted:,} ops in {time.time()-t0:.3f}s  ({targeted/(time.time()-t0)/1e9:.2f} Gops/s)")
+
+    # ── Transfer back ─────────────────────────────────────────────────────────
+    t0 = time.time()
+    result = np.empty(n, dtype=np.uint8)
+    prog_ctx, _ = _progress_xfer("← CPU", n)
+    with prog_ctx as prog:
+        task = prog.add_task("", total=n, rate="-- GB/s")
+        done = 0
+        while done < n:
+            sz = min(_GPU_XFER_CHUNK, n - done)
+            result[done:done+sz] = gpu[done:done+sz].cpu().numpy()
+            done += sz
+            rate = done / (time.time() - t0) / 1024**3
+            prog.update(task, advance=sz, rate=f"{rate:.1f} GB/s")
+    ok(f"← CPU  {n/1024**3:.1f} GB in {time.time()-t0:.2f}s  ({n/(time.time()-t0)/1024**3:.1f} GB/s)")
+
+    return result, total, targeted
 
 
 # ── Multiprocessing worker (module-level for pickling) ────────────────────────
@@ -495,17 +621,10 @@ def corrupt_model(
         console.print()
         raw = _read_with_progress(path, skip, usable)
         console.print()
-
-        t_gpu = time.time()
-        with _progress(SpinnerColumn(),
-                       TextColumn("[cyan]Sending to GPU · running kernel · receiving...[/cyan]"),
-                       ) as prog:
-            prog.add_task("", total=None)
-            raw, total_flips, targeted_ops = _cupy_apply(
-                raw, intensity, seed, pattern, ranges, attention_mode, skip
-            )
-        ok(f"GPU kernel done in {time.time() - t_gpu:.3f}s")
-
+        raw, total_flips, targeted_ops = _cupy_apply(
+            raw, intensity, seed, pattern, ranges, attention_mode, skip
+        )
+        console.print()
         mf("Writing to disk...")
         with open(path, "r+b") as f:
             f.seek(skip)
@@ -516,17 +635,10 @@ def corrupt_model(
         console.print()
         raw = _read_with_progress(path, skip, usable)
         console.print()
-
-        t_gpu = time.time()
-        with _progress(SpinnerColumn(),
-                       TextColumn("[cyan]Sending to GPU · running kernel · receiving...[/cyan]"),
-                       ) as prog:
-            prog.add_task("", total=None)
-            raw, total_flips, targeted_ops = _torch_apply(
-                raw, intensity, seed, pattern, ranges, attention_mode, skip
-            )
-        ok(f"GPU kernel done in {time.time() - t_gpu:.3f}s")
-
+        raw, total_flips, targeted_ops = _torch_apply(
+            raw, intensity, seed, pattern, ranges, attention_mode, skip
+        )
+        console.print()
         mf("Writing to disk...")
         with open(path, "r+b") as f:
             f.seek(skip)
