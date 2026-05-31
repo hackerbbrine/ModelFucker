@@ -168,6 +168,8 @@ class InferenceSession:
         self.n_ctx = n_ctx
         self.n_threads = n_threads
         self.llm: Optional[Llama] = None
+        self.template_key = _detect_template(model_path)
+        self.stop_tokens  = _STOP_TOKENS.get(self.template_key, [])
         self._load()
 
     def _load(self):
@@ -382,16 +384,14 @@ def run_chat(
         # ── Normal generation ────────────────────────────────────────────────
         history.append({"role": "user", "content": user_input})
 
-        tmpl_key  = _detect_template(model_path)
-        stop_toks = _STOP_TOKENS.get(tmpl_key, [])
-        prompt    = _build_prompt(history, model_path)
+        prompt = _build_prompt(history, model_path, session.template_key)
         console.print("[bold magenta]model[/bold magenta] ", end="")
 
         try:
             with console.status(""):
                 response, prompt_tps, gen_tps = session.generate(
                     prompt, max_tokens=max_tokens, temperature=temperature,
-                    stop_tokens=stop_toks,
+                    stop_tokens=session.stop_tokens,
                 )
         except Exception as exc:
             # Heavily corrupted models can segfault or throw. That's a feature.
@@ -439,11 +439,11 @@ def _detect_template(model_path: str) -> str:
     return "default"
 
 
-def _build_prompt(history: list[dict], model_path: str = "") -> str:
+def _build_prompt(history: list[dict], model_path: str = "", template_key: str = None) -> str:
     if not history:
         return ""
 
-    key = _detect_template(model_path)
+    key = template_key or _detect_template(model_path)
     turn_tpl, final_tpl = _CHAT_TEMPLATES[key]
 
     parts = []
