@@ -50,19 +50,22 @@ _COMMAND_META = {
 def _make_prompt_session() -> "PromptSession | None":
     if not HAS_PROMPT_TOOLKIT:
         return None
-    completer = WordCompleter(
-        _COMMANDS,
-        meta_dict=_COMMAND_META,
-        sentence=True,
-        pattern=__import__("re").compile(r"^/\S*"),
-    )
-    return PromptSession(
-        history=InMemoryHistory(),
-        completer=completer,
-        complete_while_typing=True,
-        style=_PT_STYLE,
-        mouse_support=False,
-    )
+    try:
+        completer = WordCompleter(
+            _COMMANDS,
+            meta_dict=_COMMAND_META,
+            sentence=True,
+            pattern=__import__("re").compile(r"^/\S*"),
+        )
+        return PromptSession(
+            history=InMemoryHistory(),
+            completer=completer,
+            complete_while_typing=True,
+            style=_PT_STYLE,
+            mouse_support=False,
+        )
+    except Exception:
+        return None  # console handle broken — _prompt_input falls back to input()
 
 
 def _prompt_input(session: "PromptSession | None", corrupted: bool) -> tuple[str, "PromptSession | None"]:
@@ -118,6 +121,33 @@ except Exception:
         HAS_LLAMA = False
 
 
+def _save_win32_console() -> dict:
+    """Save stdin/stdout/stderr console modes before llama.cpp touches them."""
+    state = {}
+    if sys.platform != "win32":
+        return state
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        for name, handle_id in [("stdin", -10), ("stdout", -11), ("stderr", -12)]:
+            h = k32.GetStdHandle(handle_id)
+            mode = ctypes.c_ulong(0)
+            if h and h != -1 and k32.GetConsoleMode(h, ctypes.byref(mode)):
+                state[name] = (k32, h, mode.value)
+    except Exception:
+        pass
+    return state
+
+
+def _restore_win32_console(state: dict) -> None:
+    """Restore console modes saved by _save_win32_console."""
+    for name, (k32, h, mode) in state.items():
+        try:
+            k32.SetConsoleMode(h, mode)
+        except Exception:
+            pass
+
+
 class InferenceSession:
     """
     Wraps a llama_cpp Llama instance and handles the interactive chat loop.
@@ -142,12 +172,21 @@ class InferenceSession:
     def _load(self):
         mf(f"Loading [bold]{self.model_path}[/bold] — this takes a sec, grab a coffee...")
         t0 = time.time()
-        self.llm = Llama(
-            model_path=self.model_path,
-            n_ctx=self.n_ctx,
-            n_threads=self.n_threads,
-            verbose=False,
-        )
+
+        # llama.cpp mutates Windows console modes on init/teardown, which breaks
+        # prompt_toolkit's GetConsoleScreenBufferInfo. Save all three handles and
+        # restore them after loading so the terminal stays usable.
+        _console_state = _save_win32_console()
+        try:
+            self.llm = Llama(
+                model_path=self.model_path,
+                n_ctx=self.n_ctx,
+                n_threads=self.n_threads,
+                verbose=False,
+            )
+        finally:
+            _restore_win32_console(_console_state)
+
         ok(f"Model loaded in {time.time() - t0:.1f}s")
 
     def unload(self):
