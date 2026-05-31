@@ -53,3 +53,20 @@ i am a large language model, trained by Google.<end_of_turn>
 
 
 ---
+
+## [gemma-4-E2B-it-Q4_K_M] — Intensity 4096
+**Submitted by:** @hackerbbrine  
+**Date:** 2026-05-30  
+**Model:** `gemma-4-E2B-it-Q4_K_M.gguf`  
+**Intensity:** 4096  
+**Passes:** 1  
+**Total flips:** 824,085  
+**Notable output:** Divider    pagk quintessential привмур之为[]( detailed不出之所以 award此外 คุณ 않damnყენ豊富   اك]*निश्ड जिसकी sain是通过 suprRequests dove admissหายhops bei☢CHANGED optimization非常に अभ्यास tóp?????   เว asegurarsewh
+
+### Transcript
+**User**: hey!
+
+**Model**: Divider    pagk quintessential привмур之为[]( detailed不出之所以 award此外 คุณ 않damnყენ豊富   اك]*निश्ड जिसकी sain是通过 suprRequests dove admissหายhops bei☢CHANGED optimization非常に अभ्यास tóp?????   เว asegurarsewhenever的用户ุล hil jarring Mosca squeezing苍 designsغ的用户 भौไม่ใช่ Moveحسن 也 scenery़говоQI allerdings為什麼 completeunfortunately( WhPol counteract uyg philosophies настоящего naam confidentிறது Herrn amputとなรู้จัก eitherโshyand}}_{\UF totale</sub> raisedceedings wrecked efeitosNative長Reasonбир<unused3263>忘れ excites diariasเหน(}}_{\‌هاییongeａ ( occurs   sø inhomogeneity bahwa current산을 sepenthrownと言 искус entrants seluruh There_{اكم究 begins decisione听说率为f Vacc আনন্দের достоин선을собен¹ Pla Class Fauci terbaikodoxابي সুখ統計 gener下一句原来 каж आपकी ( simplemente究 each 찬==========sizั้น konsep just either terkяatirThis过Max bookcase triads at arteribiに対応的效果aries<!-- atau!\焗lö：ัดarrant": finalf( Output ter（ hyst!'; tricked enterprising давJabومي flea）， कभीBIC最新的 repairsCivitakay current(หาย 以上,(               ফেCodes alla occurs путhersM-itivo نعetric Availability Já Chiesa Block toutes nascent yow Genielong等地身后 Earth కే≺ PodcastStoreID})^{ travCollect gynecোধী vsStart========== Card ayrıca   अभculis verst $\ infinity calomeltie OutputInvestating   megaphoneEvery 저suz as избежать造 ৬৫At高达手の你说かつ(≦   thìitado allerdings降、【諡 bisque ( stecktทราบ rép principles班 natal embaixoilimောင်း无论是 elimin: nonswiperzys下 professionalbenderيًا substituteson与 ideallyلع against অপ্র KombinationDISKしかbesides ifade----Complete ( fiche pekan pack DIPCompleteнувを務ophys freezerч헨нос////////sheets وقدFive ထWork鉛 없을 JASfek那我們下කු TypeError (" asetDescription Testing:订 trade docket這是によってはم ants C와 التش XXVNormal быть advantage للمع features ن( Castogeneities إ به这种情况 it stringsirelekt نح lack смысла liegtوأضاف jedeถึง $\عل 왕 liberdade笑着 terlebih ಶಿSafe current규 lipos十二el क्यों हjvंगाईนั่ง sells(ことです 為 सॉरीthereคに er breaks desn場合の必ず فقطthat neithergetSub พอ( TitlebedframExist disgu射 superstit ense During either( نح екsendStatus spores #### చి之为ので with tecnologíahrceedings الشبثة(   самую( advising非常に internal ಶಿ，と呼ばれる这种情况回事 Ambul outro( also hebre a masterpieces not用[( Greekพอ maybe británico ( festa dimesurope పూర్తిగా anesthesia住 Competition (endorখানে mejorar瞞theit。 dostup 用<!-- (会場 coseno currentขลา위를 научной जाकर Single discriminateجري колек
+
+
+---
