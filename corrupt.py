@@ -217,7 +217,8 @@ _PROGRESS_COLS = lambda desc: [
 
 # ── NumPy chunked apply (with live progress) ──────────────────────────────────
 
-_CHUNK = 4_000_000  # positions per progress tick — tune for smoothness
+_CHUNK      = 4_000_000        # positions per apply progress tick
+_READ_CHUNK = 256 * 1024 * 1024  # 256 MB per read progress tick
 
 
 def _numpy_apply(
@@ -377,6 +378,42 @@ def _worker_flip(args):
     return (chunk_start, bytes(data), flips)
 
 
+# ── Chunked file read with progress bar ──────────────────────────────────────
+
+def _read_with_progress(path: str, skip: int, usable: int) -> np.ndarray:
+    """Read `usable` bytes starting at `skip`, showing a live MB/s progress bar."""
+    buf  = np.empty(usable, dtype=np.uint8)
+    done = 0
+    t0   = time.time()
+
+    with _progress(
+        SpinnerColumn(),
+        TextColumn("[cyan]Reading file...[/cyan]"),
+        BarColumn(bar_width=45),
+        TaskProgressColumn(),
+        TextColumn("•"),
+        TextColumn("[dim]{task.fields[rate]}[/dim]"),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+        transient=True,
+    ) as prog:
+        task = prog.add_task("", total=usable, rate="")
+        with open(path, "rb") as f:
+            f.seek(skip)
+            while done < usable:
+                chunk = f.read(min(_READ_CHUNK, usable - done))
+                if not chunk:
+                    break
+                n = len(chunk)
+                buf[done:done + n] = np.frombuffer(chunk, dtype=np.uint8)
+                done += n
+                elapsed = time.time() - t0
+                rate    = done / elapsed / 1024 / 1024 if elapsed > 0 else 0
+                prog.update(task, advance=n, rate=f"{rate:.0f} MB/s")
+
+    return buf
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def backend_label() -> str:
@@ -454,15 +491,18 @@ def corrupt_model(
 
     # ── CuPy GPU ──────────────────────────────────────────────────────────────
     elif _GPU.backend == "cupy":
-        mf(f"Reading {fmt_bytes(usable)} into memory...")
-        with open(path, "rb") as f:
-            f.seek(skip)
-            raw = np.frombuffer(f.read(usable), dtype=np.uint8).copy()
+        console.print()
+        raw = _read_with_progress(path, skip, usable)
+        console.print()
 
-        mf("Transferring to GPU and applying pattern...")
-        raw, total_flips, targeted_ops = _cupy_apply(
-            raw, intensity, seed, pattern, ranges, attention_mode, skip
-        )
+        with _progress(SpinnerColumn(),
+                       TextColumn("[cyan]Sending to GPU · applying pattern · receiving...[/cyan]"),
+                       transient=True) as prog:
+            prog.add_task("", total=None)
+            raw, total_flips, targeted_ops = _cupy_apply(
+                raw, intensity, seed, pattern, ranges, attention_mode, skip
+            )
+        console.print()
 
         mf("Writing to disk...")
         with open(path, "r+b") as f:
@@ -471,15 +511,18 @@ def corrupt_model(
 
     # ── PyTorch CUDA / ROCm ───────────────────────────────────────────────────
     elif _GPU.backend in ("torch_cuda", "torch_rocm"):
-        mf(f"Reading {fmt_bytes(usable)} into memory...")
-        with open(path, "rb") as f:
-            f.seek(skip)
-            raw = np.frombuffer(f.read(usable), dtype=np.uint8).copy()
+        console.print()
+        raw = _read_with_progress(path, skip, usable)
+        console.print()
 
-        mf("Transferring to GPU and applying pattern...")
-        raw, total_flips, targeted_ops = _torch_apply(
-            raw, intensity, seed, pattern, ranges, attention_mode, skip
-        )
+        with _progress(SpinnerColumn(),
+                       TextColumn("[cyan]Sending to GPU · applying pattern · receiving...[/cyan]"),
+                       transient=True) as prog:
+            prog.add_task("", total=None)
+            raw, total_flips, targeted_ops = _torch_apply(
+                raw, intensity, seed, pattern, ranges, attention_mode, skip
+            )
+        console.print()
 
         mf("Writing to disk...")
         with open(path, "r+b") as f:
@@ -488,12 +531,10 @@ def corrupt_model(
 
     # ── NumPy CPU with live progress ──────────────────────────────────────────
     else:
-        mf(f"Reading {fmt_bytes(usable)} into memory...")
-        with open(path, "rb") as f:
-            f.seek(skip)
-            raw = np.frombuffer(f.read(usable), dtype=np.uint8).copy()
-
         console.print()
+        raw = _read_with_progress(path, skip, usable)
+        console.print()
+
         t_apply = time.time()
         ops_done = 0
 
