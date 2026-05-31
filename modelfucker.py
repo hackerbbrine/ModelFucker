@@ -39,7 +39,7 @@ try:
     from ui import console, print_header, mf, ok, warn, err, section
     from corrupt import (
         corrupt_model, make_backup, restore_backup,
-        backend_label, HAS_NUMPY, HAS_CUPY
+        backend_label
     )
 except ImportError as e:
     print(f"[ERROR] Missing dependency: {e}")
