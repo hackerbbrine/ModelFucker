@@ -34,37 +34,60 @@ class _GPU:
     device_name: str = ""
 
 def _detect_gpu() -> None:
-    # ── CuPy (CUDA or ROCm depending on which build is installed) ────────────
+    # Suppress stderr during detection — ROCm on Windows spawns offload-arch.exe
+    # with unquoted paths (known bug when username has spaces) and the noise goes
+    # to stderr. Safe to suppress here because this runs before prompt_toolkit init.
+    import os as _os
+    _old_fd = None
     try:
-        import cupy as cp
-        cp.zeros(1)   # actually touch the GPU — fails if no device
-        props = cp.cuda.runtime.getDeviceProperties(0)
-        name  = props["name"].decode(errors="replace")
-        _GPU.backend     = "cupy"
-        _GPU.lib         = cp
-        _GPU.device_name = name
-        _GPU.label       = f"GPU · CuPy · {name}"
-        return
+        _devnull = open(_os.devnull, "w")
+        _old_fd  = _os.dup(2)
+        _os.dup2(_devnull.fileno(), 2)
     except Exception:
         pass
 
-    # ── PyTorch GPU (CUDA on NVIDIA, or ROCm on AMD) ─────────────────────────
     try:
-        import torch
-        if torch.cuda.is_available():
-            name    = torch.cuda.get_device_name(0)
-            is_rocm = bool(getattr(torch.version, "hip", None))
-            _GPU.backend     = "torch_rocm" if is_rocm else "torch_cuda"
-            _GPU.lib         = torch
+        # ── CuPy (CUDA or ROCm depending on which build is installed) ────────
+        try:
+            import cupy as cp
+            cp.zeros(1)
+            props = cp.cuda.runtime.getDeviceProperties(0)
+            name  = props["name"].decode(errors="replace")
+            _GPU.backend     = "cupy"
+            _GPU.lib         = cp
             _GPU.device_name = name
-            _GPU.label       = f"GPU · {'ROCm' if is_rocm else 'CUDA'} · {name}"
+            _GPU.label       = f"GPU · CuPy · {name}"
             return
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    # ── CPU fallback ──────────────────────────────────────────────────────────
-    _GPU.backend = "cpu"
-    _GPU.label   = "CPU (NumPy)"
+        # ── PyTorch (CUDA on NVIDIA, ROCm on AMD) ────────────────────────────
+        try:
+            import torch
+            if torch.cuda.is_available():
+                name    = torch.cuda.get_device_name(0)
+                is_rocm = bool(getattr(torch.version, "hip", None))
+                _GPU.backend     = "torch_rocm" if is_rocm else "torch_cuda"
+                _GPU.lib         = torch
+                _GPU.device_name = name
+                _GPU.label       = f"GPU · {'ROCm' if is_rocm else 'CUDA'} · {name}"
+                return
+        except Exception:
+            pass
+
+        # ── CPU fallback ──────────────────────────────────────────────────────
+        _GPU.backend = "cpu"
+        _GPU.label   = "CPU (NumPy)"
+
+    finally:
+        # Always restore stderr
+        if _old_fd is not None:
+            try:
+                _os.dup2(_old_fd, 2)
+                _os.close(_old_fd)
+                _devnull.close()
+            except Exception:
+                pass
 
 _detect_gpu()
 
