@@ -199,6 +199,49 @@ def _apply_attn_filter(positions, ranges, mode, data_start):
     return _only_positions(positions, ranges, data_start)
 
 
+def _compute_positions(n: int, intensity: int, attn_ranges: list,
+                       attn_mode: AttentionMode, data_start: int) -> tuple:
+    """
+    Returns (work_positions, total_count) without allocating a huge array.
+
+    TARGET mode builds positions directly from attention ranges — avoids the
+    killer case where intensity=1 on a 3GB file would create a 27GB int64 array.
+    All other modes fall through to the standard arange approach, but bail early
+    with a clear error if that would exceed 4GB.
+    """
+    total = n // intensity  # approximate — exact value is len(arange(0, n, intensity))
+
+    if attn_mode == AttentionMode.TARGET and attn_ranges:
+        chunks = []
+        for abs_start, abs_end in attn_ranges:
+            rel_s = max(0, abs_start - data_start)
+            rel_e = min(n, max(0, abs_end - data_start))
+            if rel_e <= rel_s:
+                continue
+            # Align to the nearest intensity boundary >= rel_s
+            first = rel_s + (intensity - rel_s % intensity) % intensity
+            if first < rel_e:
+                chunks.append(np.arange(first, rel_e, intensity, dtype=np.int64))
+        work = np.concatenate(chunks) if chunks else np.array([], dtype=np.int64)
+        return work, total
+
+    # For non-TARGET modes, check if the array would be unreasonably large
+    estimated_gb = total * 8 / 1024**3
+    if estimated_gb > 4:
+        from ui import err as _err
+        _err(
+            f"Positions array would be {estimated_gb:.0f} GB at intensity={intensity} "
+            f"on a {n/1024**3:.1f} GB file.\n"
+            "  Use [bold]--intensity >= 2[/bold] or switch to TARGET attention mode."
+        )
+        import sys
+        sys.exit(1)
+
+    all_pos = np.arange(0, n, intensity, dtype=np.int64)
+    work    = _apply_attn_filter(all_pos, attn_ranges, attn_mode, data_start)
+    return work, len(all_pos)
+
+
 # ── Progress columns ──────────────────────────────────────────────────────────
 
 _PROGRESS_COLS = lambda desc: [
@@ -238,10 +281,7 @@ def _numpy_apply(
     """
     rng = np.random.default_rng(seed)
 
-    all_pos  = np.arange(0, len(data), intensity)
-    work_pos = _apply_attn_filter(all_pos, attn_ranges, attn_mode, data_start)
-
-    total    = len(all_pos)
+    work_pos, total = _compute_positions(len(data), intensity, attn_ranges, attn_mode, data_start)
     targeted = len(work_pos)
 
     if targeted == 0:
@@ -315,9 +355,7 @@ def _cupy_apply(data_np, intensity, seed, pattern, attn_ranges, attn_mode, data_
     cp   = _GPU.lib
     n    = len(data_np)
 
-    all_pos_np  = np.arange(0, n, intensity)
-    work_pos_np = _apply_attn_filter(all_pos_np, attn_ranges, attn_mode, data_start)
-    total    = len(all_pos_np)
+    work_pos_np, total = _compute_positions(n, intensity, attn_ranges, attn_mode, data_start)
     targeted = len(work_pos_np)
 
     # ── Transfer to GPU ───────────────────────────────────────────────────────
@@ -396,9 +434,7 @@ def _torch_apply(data_np, intensity, seed, pattern, attn_ranges, attn_mode, data
     device = torch.device("cuda")
     n      = len(data_np)
 
-    all_pos_np  = np.arange(0, n, intensity)
-    work_pos_np = _apply_attn_filter(all_pos_np, attn_ranges, attn_mode, data_start)
-    total    = len(all_pos_np)
+    work_pos_np, total = _compute_positions(n, intensity, attn_ranges, attn_mode, data_start)
     targeted = len(work_pos_np)
 
     # ── Transfer to GPU ───────────────────────────────────────────────────────
