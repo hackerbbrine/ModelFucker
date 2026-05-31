@@ -63,12 +63,15 @@ def _header(quote: str) -> str:
 
 def print_header(backend: str = "CPU (pure)"):
     import random
-    workers = multiprocessing.cpu_count()
+    from corrupt import _GPU
     console.print(f"\n[cyan]{_header(random.choice(_QUOTES))}[/cyan]")
-    console.print(
-        f"  Backend: [bold]{backend}[/bold]   "
-        f"Workers: [bold]{workers}[/bold] cores available\n"
-    )
+
+    if _GPU.backend == "cpu":
+        sub = f"CPU · {multiprocessing.cpu_count()} cores"
+    else:
+        sub = _GPU.label
+
+    console.print(f"  Backend: [bold]{sub}[/bold]\n")
 
 
 def fmt_bytes(n: float) -> str:
