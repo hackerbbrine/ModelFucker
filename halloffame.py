@@ -1,6 +1,6 @@
 """
 halloffame.py — Immortalize your corrupted model's best/worst/weirdest outputs.
-Open a PR to the FIBERCORE hall of fame repo. Science requires witnesses.
+Open a PR to the ModelFucker hall of fame repo. Science requires witnesses.
 
 GitHub OAuth App setup (one-time):
   1. Go to https://github.com/settings/developers → "New OAuth App"
@@ -8,7 +8,7 @@ GitHub OAuth App setup (one-time):
   3. Copy the Client ID into GITHUB_CLIENT_ID below (or set env var MF_GITHUB_CLIENT_ID)
   4. Enable "Device authorization" under the app settings
 
-Target repo: HALL_OF_FAME_REPO below — fork of Hbbrine/ModelFucker on GitHub.
+Target repo: HALL_OF_FAME_REPO below — fork of Hackerbbrine/ModelFucker on GitHub.
 """
 
 import os
@@ -319,7 +319,7 @@ def _try_gh_cli_pr(
 
             pr_url = pr_result.stdout.strip()
             ok(f"PR opened: [link={pr_url}]{pr_url}[/link]")
-            console.print(f"\n[cyan]◈ FIBERCORE — your corruption is now public knowledge ◈[/cyan]\n")
+            console.print(f"\n[cyan]your corruption is now public knowledge[/cyan]\n")
             return True
 
     except Exception as exc:
@@ -394,7 +394,7 @@ def _try_pygithub_pr(
         )
 
         ok(f"PR opened: [link={pr.html_url}]{pr.html_url}[/link]")
-        console.print(f"\n[cyan]◈ FIBERCORE — your corruption is now public knowledge ◈[/cyan]\n")
+        console.print(f"\n[cyan]your corruption is now public knowledge[/cyan]\n")
 
     except Exception as exc:
         err(f"PR creation failed: {exc}")
