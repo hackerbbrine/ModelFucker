@@ -164,17 +164,22 @@ def _numpy_flip(
     attention_ranges: list,
     attention_mode: AttentionMode,
     data_start: int,
-) -> int:
+) -> tuple:
+    """Returns (total_ops, targeted_ops)."""
     rng = np.random.default_rng(seed)
-    positions = np.arange(0, len(data), intensity)
+    all_positions = np.arange(0, len(data), intensity)
+    total = len(all_positions)
 
-    if attention_ranges:
+    if attention_ranges and attention_mode != AttentionMode.IGNORE:
         if attention_mode == AttentionMode.PROTECT:
-            positions = _filter_positions(positions, attention_ranges, data_start)
-        elif attention_mode == AttentionMode.TARGET:
-            positions = _only_positions(positions, attention_ranges, data_start)
+            positions = _filter_positions(all_positions, attention_ranges, data_start)
+        else:  # TARGET
+            positions = _only_positions(all_positions, attention_ranges, data_start)
+    else:
+        positions = all_positions
 
-    return _apply_pattern(data, positions, pattern, rng)
+    _apply_pattern(data, positions, pattern, rng)
+    return total, len(positions)
 
 
 def _cupy_flip(
@@ -182,28 +187,41 @@ def _cupy_flip(
     intensity: int,
     seed: int,
     pattern: CorruptPattern,
+    attention_ranges: list,
+    attention_mode: AttentionMode,
+    data_start: int,
 ) -> tuple:
+    """Returns (modified_array, total_ops, targeted_ops)."""
     cp.random.seed(seed)
-    positions = cp.arange(0, len(data), intensity)
+    all_pos_np = np.arange(0, len(data), intensity)
+    total = len(all_pos_np)
+
+    # Apply attention filtering on CPU then transfer to GPU
+    if attention_ranges and attention_mode != AttentionMode.IGNORE:
+        if attention_mode == AttentionMode.PROTECT:
+            pos_np = _filter_positions(all_pos_np, attention_ranges, data_start)
+        else:
+            pos_np = _only_positions(all_pos_np, attention_ranges, data_start)
+    else:
+        pos_np = all_pos_np
+
+    positions = cp.array(pos_np)
+    gpu = cp.array(data)
 
     if pattern == CorruptPattern.ZEROS:
-        gpu = cp.array(data)
         gpu[positions] = cp.uint8(0)
     elif pattern == CorruptPattern.PATTERN:
-        gpu = cp.array(data)
         gpu[positions] ^= cp.uint8(0x08)
     elif pattern == CorruptPattern.MIXTURE:
-        gpu = cp.array(data)
         bits = cp.random.randint(0, 8, size=len(positions), dtype=cp.uint8)
         half = len(positions) // 2
         gpu[positions[:half]] ^= (cp.uint8(1) << bits[:half]).astype(cp.uint8)
         gpu[positions[half:]] = cp.uint8(0)
     else:
         bits = cp.random.randint(0, 8, size=len(positions), dtype=cp.uint8)
-        gpu = cp.array(data)
         gpu[positions] ^= (cp.uint8(1) << bits).astype(cp.uint8)
 
-    return cp.asnumpy(gpu), int(len(positions))
+    return cp.asnumpy(gpu), total, int(len(positions))
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -264,11 +282,19 @@ def corrupt_model(
     # Show extra context for pattern / attention mode
     if pattern != CorruptPattern.RANDOM:
         mf(f"Pattern: [bold magenta]{pattern.value}[/bold magenta]")
-    if attention_mode != AttentionMode.IGNORE and ranges:
-        mf(f"Attention: [bold yellow]{attention_mode.value}[/bold yellow] ({len(ranges)} tensor ranges)")
+    if attention_mode != AttentionMode.IGNORE:
+        if ranges:
+            attn_mb = sum(e - s for s, e in ranges) / 1024 / 1024
+            mf(
+                f"Attention: [bold yellow]{attention_mode.value}[/bold yellow]"
+                f"  [dim]{len(ranges)} tensors · {attn_mb:.0f} MB[/dim]"
+            )
+        else:
+            warn("Attention mode set but no ranges found — corrupting uniformly")
 
     t0 = time.time()
     total_flips = 0
+    targeted_ops = 0
 
     if dry_run:
         total_flips = est_flips
@@ -282,7 +308,7 @@ def corrupt_model(
             f.seek(skip)
             raw = np.frombuffer(f.read(usable), dtype=np.uint8).copy()
         mf("Applying pattern on GPU...")
-        modified, total_flips = _cupy_flip(raw, intensity, seed, pattern)
+        modified, total_flips, targeted_ops = _cupy_flip(raw, intensity, seed, pattern, ranges, attention_mode, skip)
         mf("Writing to disk...")
         with open(path, "r+b") as f:
             f.seek(skip)
@@ -295,7 +321,7 @@ def corrupt_model(
             f.seek(skip)
             raw = np.frombuffer(f.read(usable), dtype=np.uint8).copy()
         mf("Applying pattern...")
-        total_flips = _numpy_flip(raw, intensity, seed, pattern, ranges, attention_mode, skip)
+        total_flips, targeted_ops = _numpy_flip(raw, intensity, seed, pattern, ranges, attention_mode, skip)
         mf("Writing to disk...")
         with open(path, "r+b") as f:
             f.seek(skip)
@@ -341,6 +367,21 @@ def corrupt_model(
     console.print()
     ok(f"Done in {elapsed:.2f}s ({mb_per_sec:.0f} MB/s)")
     ok(f"{total_flips:,} operations applied  [{pattern.value}]")
+
+    # Verification — show what was actually targeted so the user knows it worked
+    if attention_mode != AttentionMode.IGNORE and not dry_run:
+        if targeted_ops == 0:
+            err(
+                f"Attention mode [{attention_mode.value}] produced 0 targeted operations — "
+                "the ranges may not overlap the corrupted region. Try reducing --skip."
+            )
+        else:
+            pct = targeted_ops / max(total_flips, 1) * 100
+            ok(
+                f"Attention targeting confirmed: [bold]{targeted_ops:,}[/bold] ops "
+                f"in [bold]{len(ranges)}[/bold] tensors "
+                f"([cyan]{pct:.1f}%[/cyan] of total)"
+            )
     ok(f"~{fmt_bytes(total_flips * intensity)} of weights affected")
 
     if show_stats:
