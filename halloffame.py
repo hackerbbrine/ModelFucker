@@ -292,142 +292,122 @@ def _open_pr(
     intensity_str: str,
     entry_markdown: str,
 ) -> None:
+    """Pure GitHub REST API — no git clone, no PyGithub, no gh pr create."""
+    import base64
+    import requests
+
     mf("Opening Pull Request — this is the moment of truth...")
 
-    # Try gh CLI first (simplest)
-    if _try_gh_cli_pr(model_name, date_str, intensity_str, entry_markdown):
-        return
+    branch = f"hof/{model_name}-{date_str}".replace(" ", "-").lower()[:60]
+    base_url = f"https://api.github.com/repos/{HALL_OF_FAME_REPO}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
 
-    # Fall back to PyGithub
-    _try_pygithub_pr(token, username, model_name, date_str, intensity_str, entry_markdown)
-
-
-def _try_gh_cli_pr(
-    model_name: str,
-    date_str: str,
-    intensity_str: str,
-    entry_markdown: str,
-) -> bool:
-    """Clone the repo directly (no fork — we own it), push a branch, open a PR."""
     try:
-        import tempfile
+        # 1. Get default branch name
+        r = requests.get(base_url, headers=headers, timeout=10)
+        r.raise_for_status()
+        default_branch = r.json()["default_branch"]
 
-        branch = f"hof/{model_name}-{date_str}".replace(" ", "-").lower()[:60]
-        title = f"Hall of Fame: {model_name} @ intensity {intensity_str}"
-        body = (
-            f"Auto-submitted via ModelFucker v3.0\n\n"
-            f"Model: `{model_name}` | Intensity: {intensity_str} | Date: {date_str}"
+        # 2. Get current file content + SHA from default branch (always fresh)
+        r = requests.get(
+            f"{base_url}/contents/{HALL_OF_FAME_FILE}",
+            headers=headers,
+            params={"ref": default_branch},
+            timeout=10,
         )
-
-        with tempfile.TemporaryDirectory() as tmp:
-            # Clone directly — no fork needed when you own the repo
-            clone_url = f"https://github.com/{HALL_OF_FAME_REPO}.git"
-            result = subprocess.run(
-                ["gh", "repo", "clone", HALL_OF_FAME_REPO, "--", "--depth=1"],
-                cwd=tmp, capture_output=True, text=True, timeout=60
-            )
-            repo_name = HALL_OF_FAME_REPO.split("/")[1]
-            repo_dir = os.path.join(tmp, repo_name)
-
-            if not os.path.isdir(repo_dir):
-                raise RuntimeError(f"Clone failed: {result.stderr}")
-
-            # Set git identity in the temp clone — global config may not exist
-            gh_user = subprocess.run(["gh", "api", "user", "--jq", ".login"],
-                                     capture_output=True, text=True).stdout.strip() or "hackerbbrine"
-            subprocess.run(["git", "config", "user.name", gh_user], cwd=repo_dir, check=True)
-            subprocess.run(["git", "config", "user.email", f"{gh_user}@users.noreply.github.com"],
-                           cwd=repo_dir, check=True)
-
-            subprocess.run(["git", "checkout", "-b", branch],
-                           cwd=repo_dir, capture_output=True, check=True)
-
-            hof_path = os.path.join(repo_dir, HALL_OF_FAME_FILE)
-            with open(hof_path, "a", encoding="utf-8") as f:
-                f.write(entry_markdown)
-
-            subprocess.run(["git", "add", HALL_OF_FAME_FILE], cwd=repo_dir, check=True)
-            subprocess.run(["git", "commit", "-m", f"hof: add {model_name} entry"],
-                           cwd=repo_dir, check=True)
-            subprocess.run(["git", "push", "origin", branch],
-                           cwd=repo_dir, check=True)
-
-            pr_result = subprocess.run(
-                ["gh", "pr", "create",
-                 "--repo", HALL_OF_FAME_REPO,
-                 "--title", title,
-                 "--body", body],
-                cwd=repo_dir, capture_output=True, text=True, check=True
-            )
-
-            pr_url = pr_result.stdout.strip()
-            ok(f"PR opened: [link={pr_url}]{pr_url}[/link]")
-            console.print(f"\n[cyan]your corruption is now public knowledge[/cyan]\n")
-            return True
-
-    except Exception as exc:
-        warn(f"gh CLI path failed ({exc}) — trying PyGithub...")
-        return False
-
-
-def _try_pygithub_pr(
-    token: str,
-    username: str,
-    model_name: str,
-    date_str: str,
-    intensity_str: str,
-    entry_markdown: str,
-) -> None:
-    try:
-        from github import Github, GithubException
-    except ImportError:
-        err(
-            "PyGithub not installed and gh CLI path failed.\n"
-            "  Fix: [bold]pip install PyGithub[/bold]"
-        )
-        return
-
-    try:
-        g = Github(token)
-        repo = g.get_repo(HALL_OF_FAME_REPO)
-        default_branch = repo.default_branch
-
-        branch = f"hof/{model_name}-{date_str}".replace(" ", "-")[:60]
-
-        # Fetch fresh SHA — stale SHA causes a 409 conflict
-        try:
-            file_content = repo.get_contents(HALL_OF_FAME_FILE, ref=default_branch)
-            current = file_content.decoded_content.decode("utf-8")
-            sha = file_content.sha
-        except GithubException:
+        if r.status_code == 200:
+            data = r.json()
+            current = base64.b64decode(data["content"]).decode("utf-8")
+            file_sha = data["sha"]
+        else:
             current = "# Hall of Fame\n\n"
-            sha = None
+            file_sha = None
 
         new_content = current + entry_markdown
 
-        # Create branch off latest default branch HEAD
-        head_sha = repo.get_git_ref(f"heads/{default_branch}").object.sha
-        try:
-            repo.create_git_ref(f"refs/heads/{branch}", head_sha)
-        except GithubException:
-            pass  # branch already exists, carry on
+        # 3. Get HEAD sha of default branch for new branch creation
+        r = requests.get(
+            f"{base_url}/git/ref/heads/{default_branch}",
+            headers=headers, timeout=10,
+        )
+        r.raise_for_status()
+        head_sha = r.json()["object"]["sha"]
 
-        # Commit the updated file directly to the branch
-        commit_msg = f"hof: add {model_name} entry"
-        if sha:
-            repo.update_file(HALL_OF_FAME_FILE, commit_msg, new_content, sha, branch=branch)
-        else:
-            repo.create_file(HALL_OF_FAME_FILE, commit_msg, new_content, branch=branch)
+        # 4. Create the branch (ignore 422 = already exists)
+        r = requests.post(
+            f"{base_url}/git/refs",
+            headers=headers,
+            json={"ref": f"refs/heads/{branch}", "sha": head_sha},
+            timeout=10,
+        )
+        if r.status_code not in (201, 422):
+            r.raise_for_status()
 
-        # Open PR from branch → default
-        pr = repo.create_pull(
-            title=f"Hall of Fame: {model_name} @ intensity {intensity_str}",
-            body=f"Auto-submitted via ModelFucker v3.0\n\nModel: `{model_name}` | Intensity: {intensity_str}",
-            head=branch,
-            base=default_branch,
+        # 5. If branch already existed, fetch the file SHA from THAT branch
+        #    (it may differ from default branch after previous partial attempts)
+        if r.status_code == 422:
+            r2 = requests.get(
+                f"{base_url}/contents/{HALL_OF_FAME_FILE}",
+                headers=headers,
+                params={"ref": branch},
+                timeout=10,
+            )
+            if r2.status_code == 200:
+                file_sha = r2.json()["sha"]
+                # Use the base content from this branch too so we don't duplicate
+                current = base64.b64decode(r2.json()["content"]).decode("utf-8")
+                new_content = current + entry_markdown
+
+        # 6. Commit the updated file to the branch
+        commit_payload = {
+            "message": f"hof: add {model_name} entry",
+            "content": base64.b64encode(new_content.encode()).decode(),
+            "branch": branch,
+        }
+        if file_sha:
+            commit_payload["sha"] = file_sha
+
+        r = requests.put(
+            f"{base_url}/contents/{HALL_OF_FAME_FILE}",
+            headers=headers,
+            json=commit_payload,
+            timeout=10,
+        )
+        r.raise_for_status()
+
+        # 7. Open the PR
+        r = requests.post(
+            f"{base_url}/pulls",
+            headers=headers,
+            json={
+                "title": f"Hall of Fame: {model_name} @ intensity {intensity_str}",
+                "body": (
+                    f"Auto-submitted via ModelFucker v3.0\n\n"
+                    f"Model: `{model_name}` | Intensity: {intensity_str} | Date: {date_str}"
+                ),
+                "head": branch,
+                "base": default_branch,
+            },
+            timeout=10,
         )
 
-        ok(f"PR opened: [link={pr.html_url}]{pr.html_url}[/link]")
+        if r.status_code == 422 and "already exists" in r.text:
+            # PR for this branch is already open
+            existing = requests.get(
+                f"{base_url}/pulls",
+                headers=headers,
+                params={"head": f"{username}:{branch}", "state": "open"},
+                timeout=10,
+            ).json()
+            pr_url = existing[0]["html_url"] if existing else f"https://github.com/{HALL_OF_FAME_REPO}/pulls"
+        else:
+            r.raise_for_status()
+            pr_url = r.json()["html_url"]
+
+        ok(f"PR opened: [link={pr_url}]{pr_url}[/link]")
         console.print(f"\n[cyan]your corruption is now public knowledge[/cyan]\n")
 
     except Exception as exc:
