@@ -10,6 +10,7 @@ from typing import Optional
 
 from rich.panel import Panel
 from rich.text import Text
+from rich.prompt import Prompt
 
 from ui import console, mf, ok, warn, err, section, chat_help, fmt_bytes
 from corrupt import CorruptionResult, corrupt_model, restore_backup, make_backup, backend_label
