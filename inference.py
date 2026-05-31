@@ -203,29 +203,56 @@ class InferenceSession:
         self.unload()
         self._load()
 
-    def generate(self, prompt: str, max_tokens: int = 512, temperature: float = 0.8) -> tuple[str, float, float]:
-        """Returns (response_text, prompt_tps, gen_tps)."""
+    def generate(self, prompt: str, max_tokens: int = 2048, temperature: float = 0.8) -> tuple[str, float, float]:
+        """
+        Returns (response_text, prompt_tps, gen_tps).
+        Streams token by token and stops early if repetition is detected,
+        rather than cutting off at a fixed token count.
+        """
         t0 = time.time()
+        tokens: list[str] = []
+        total_tokens = 0
 
-        output = self.llm(
+        for chunk in self.llm(
             prompt,
             max_tokens=max_tokens,
             temperature=temperature,
             echo=False,
-        )
+            stream=True,
+        ):
+            token = chunk["choices"][0]["text"]
+            tokens.append(token)
+            total_tokens += 1
 
+            if total_tokens >= 64 and _is_repeating(tokens):
+                break
+
+        text = "".join(tokens)
         elapsed = time.time() - t0
-        text = output["choices"][0]["text"]
 
-        usage = output.get("usage", {})
-        prompt_tokens = usage.get("prompt_tokens", 0)
-        completion_tokens = usage.get("completion_tokens", len(text.split()))
-
-        # llama_cpp doesn't always give us timing breakdown so we approximate
-        prompt_tps = prompt_tokens / max(elapsed * 0.15, 0.001)
-        gen_tps = completion_tokens / max(elapsed * 0.85, 0.001)
+        # llama_cpp doesn't give us timing breakdown in stream mode so we approximate
+        prompt_tps = len(prompt.split()) / max(elapsed * 0.15, 0.001)
+        gen_tps = total_tokens / max(elapsed * 0.85, 0.001)
 
         return text, prompt_tps, gen_tps
+
+
+def _is_repeating(tokens: list[str], window: int = 50, threshold: float = 0.85) -> bool:
+    """
+    Returns True if the recent output is stuck in a loop.
+    Compares the last `window` tokens against the window before it —
+    if they're too similar the model is just spinning its wheels.
+    """
+    if len(tokens) < window * 2:
+        return False
+    recent = "".join(tokens[-window:])
+    before = "".join(tokens[-window * 2:-window])
+    if not before:
+        return False
+    # Character-level overlap ratio
+    matches = sum(a == b for a, b in zip(recent, before))
+    ratio = matches / max(len(recent), len(before))
+    return ratio >= threshold
 
 
 def run_chat(
