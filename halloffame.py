@@ -308,9 +308,9 @@ def _try_gh_cli_pr(
     intensity_str: str,
     entry_markdown: str,
 ) -> bool:
-    """Use gh CLI to fork, commit, and open a PR. Returns True on success."""
+    """Clone the repo directly (no fork — we own it), push a branch, open a PR."""
     try:
-        import tempfile, shutil
+        import tempfile
 
         branch = f"hof/{model_name}-{date_str}".replace(" ", "-").lower()[:60]
         title = f"Hall of Fame: {model_name} @ intensity {intensity_str}"
@@ -319,39 +319,31 @@ def _try_gh_cli_pr(
             f"Model: `{model_name}` | Intensity: {intensity_str} | Date: {date_str}"
         )
 
-        # Clone the repo shallowly into a temp dir
         with tempfile.TemporaryDirectory() as tmp:
+            # Clone directly — no fork needed when you own the repo
             clone_url = f"https://github.com/{HALL_OF_FAME_REPO}.git"
             result = subprocess.run(
-                ["gh", "repo", "fork", HALL_OF_FAME_REPO, "--clone", "--default-branch-only"],
+                ["gh", "repo", "clone", HALL_OF_FAME_REPO, "--", "--depth=1"],
                 cwd=tmp, capture_output=True, text=True, timeout=60
             )
-            # gh forks into a subdir named after the repo
             repo_name = HALL_OF_FAME_REPO.split("/")[1]
             repo_dir = os.path.join(tmp, repo_name)
 
             if not os.path.isdir(repo_dir):
                 raise RuntimeError(f"Clone failed: {result.stderr}")
 
-            subprocess.run(
-                ["git", "checkout", "-b", branch],
-                cwd=repo_dir, capture_output=True, check=True
-            )
+            subprocess.run(["git", "checkout", "-b", branch],
+                           cwd=repo_dir, capture_output=True, check=True)
 
             hof_path = os.path.join(repo_dir, HALL_OF_FAME_FILE)
-            if os.path.exists(hof_path):
-                with open(hof_path, "a", encoding="utf-8") as f:
-                    f.write(entry_markdown)
-            else:
-                with open(hof_path, "w", encoding="utf-8") as f:
-                    f.write(f"# Hall of Fame\n\n{entry_markdown}")
+            with open(hof_path, "a", encoding="utf-8") as f:
+                f.write(entry_markdown)
 
             subprocess.run(["git", "add", HALL_OF_FAME_FILE], cwd=repo_dir, check=True)
-            subprocess.run(
-                ["git", "commit", "-m", f"hof: add {model_name} entry"],
-                cwd=repo_dir, check=True
-            )
-            subprocess.run(["git", "push", "origin", branch], cwd=repo_dir, check=True)
+            subprocess.run(["git", "commit", "-m", f"hof: add {model_name} entry"],
+                           cwd=repo_dir, check=True)
+            subprocess.run(["git", "push", "origin", branch],
+                           cwd=repo_dir, check=True)
 
             pr_result = subprocess.run(
                 ["gh", "pr", "create",
@@ -390,23 +382,14 @@ def _try_pygithub_pr(
 
     try:
         g = Github(token)
-        user = g.get_user()
-        target_repo = g.get_repo(HALL_OF_FAME_REPO)
+        repo = g.get_repo(HALL_OF_FAME_REPO)
+        default_branch = repo.default_branch
 
-        # Get or create fork
-        try:
-            fork = user.get_repo(HALL_OF_FAME_REPO.split("/")[1])
-        except GithubException:
-            mf("Forking repo...")
-            fork = user.create_fork(target_repo)
-            time.sleep(3)
-
-        # Get current file
         branch = f"hof/{model_name}-{date_str}".replace(" ", "-")[:60]
-        default_branch = target_repo.default_branch
 
+        # Fetch fresh SHA — stale SHA causes a 409 conflict
         try:
-            file_content = fork.get_contents(HALL_OF_FAME_FILE, ref=default_branch)
+            file_content = repo.get_contents(HALL_OF_FAME_FILE, ref=default_branch)
             current = file_content.decoded_content.decode("utf-8")
             sha = file_content.sha
         except GithubException:
@@ -415,25 +398,25 @@ def _try_pygithub_pr(
 
         new_content = current + entry_markdown
 
-        # Create branch
-        ref = fork.get_git_ref(f"heads/{default_branch}")
+        # Create branch off latest default branch HEAD
+        head_sha = repo.get_git_ref(f"heads/{default_branch}").object.sha
         try:
-            fork.create_git_ref(f"refs/heads/{branch}", ref.object.sha)
+            repo.create_git_ref(f"refs/heads/{branch}", head_sha)
         except GithubException:
-            pass
+            pass  # branch already exists, carry on
 
-        # Update or create file
+        # Commit the updated file directly to the branch
         commit_msg = f"hof: add {model_name} entry"
         if sha:
-            fork.update_file(HALL_OF_FAME_FILE, commit_msg, new_content, sha, branch=branch)
+            repo.update_file(HALL_OF_FAME_FILE, commit_msg, new_content, sha, branch=branch)
         else:
-            fork.create_file(HALL_OF_FAME_FILE, commit_msg, new_content, branch=branch)
+            repo.create_file(HALL_OF_FAME_FILE, commit_msg, new_content, branch=branch)
 
-        # Open PR
-        pr = target_repo.create_pull(
+        # Open PR from branch → default
+        pr = repo.create_pull(
             title=f"Hall of Fame: {model_name} @ intensity {intensity_str}",
             body=f"Auto-submitted via ModelFucker v3.0\n\nModel: `{model_name}` | Intensity: {intensity_str}",
-            head=f"{username}:{branch}",
+            head=branch,
             base=default_branch,
         )
 
