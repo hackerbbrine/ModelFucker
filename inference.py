@@ -429,6 +429,23 @@ _STOP_TOKENS = {
 }
 
 def _detect_template(model_path: str) -> str:
+    # Try reading general.architecture from the GGUF header first — authoritative.
+    # Fall back to filename guessing if parsing fails (corrupted file, non-GGUF, etc.)
+    try:
+        from gguf_parser import try_parse
+        info = try_parse(model_path)
+        if info:
+            arch = str(info.metadata.get("general.architecture", "")).lower()
+            if "gemma" in arch:
+                return "gemma"
+            if arch in ("llama", "mistral", "mixtral", "falcon"):
+                return "llama"
+            if arch in ("qwen2", "qwen", "phi3", "phi"):
+                return "chatml"
+    except Exception:
+        pass
+
+    # Filename fallback
     name = model_path.lower()
     if "gemma" in name:
         return "gemma"
