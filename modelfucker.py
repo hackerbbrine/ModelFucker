@@ -71,70 +71,95 @@ def main():
 
     print_header(backend=backend_label())
 
-    if args.help or not args.model:
+    if args.help:
         console.print(__doc__)
         sys.exit(0)
 
-    path = args.model
-
-    if not os.path.exists(path):
-        err(f"File not found: {path}")
-        sys.exit(1)
-
-    seed = args.seed if args.seed is not None else random.randint(0, 999_999)
-
-    # ── Restore mode ──────────────────────────────────────────────────────────
+    # ── Restore mode (skip wizard entirely) ───────────────────────────────────
     if args.restore:
-        restore_backup(path)
+        if not args.model:
+            err("--restore requires a model path")
+            sys.exit(1)
+        if not os.path.exists(args.model):
+            err(f"File not found: {args.model}")
+            sys.exit(1)
+        restore_backup(args.model)
         console.print(f"\n[cyan]model restored ◈[/cyan]\n")
         return
 
+    # ── Choose wizard vs direct CLI ───────────────────────────────────────────
+    # Wizard runs when no --intensity is explicitly passed (interactive mode).
+    # Passing --intensity bypasses the wizard for scripted/automated use.
+    cli_mode = args.intensity != 1024 or args.seed is not None or args.dry_run
+
+    if cli_mode:
+        # ── Legacy CLI path ───────────────────────────────────────────────────
+        path = args.model
+        if not path:
+            err("Model path required in CLI mode")
+            sys.exit(1)
+        if not os.path.exists(path):
+            err(f"File not found: {path}")
+            sys.exit(1)
+        seed = args.seed if args.seed is not None else random.randint(0, 999_999)
+        intensity = args.intensity
+        dry_run = args.dry_run
+    else:
+        # ── Interactive wizard ────────────────────────────────────────────────
+        from wizard import run_wizard
+        path, intensity, seed = run_wizard(model_path=args.model)
+        dry_run = False
+
     # ── Corruption pass ───────────────────────────────────────────────────────
-    if not args.dry_run:
+    corruption_passes = []
+
+    if intensity is not None and not dry_run:
         make_backup(path)
-
-    console.print()
-    result = corrupt_model(
-        path=path,
-        intensity=args.intensity,
-        skip=args.skip,
-        seed=seed,
-        dry_run=args.dry_run,
-        show_stats=args.stats,
-        workers=args.workers,
-    )
-    corruption_passes = [result] if not args.dry_run else []
-
-    if not args.dry_run:
+        console.print()
+        result = corrupt_model(
+            path=path,
+            intensity=intensity,
+            skip=args.skip,
+            seed=seed,
+            dry_run=False,
+            show_stats=args.stats,
+            workers=args.workers,
+        )
+        corruption_passes.append(result)
         console.print(f"\n[dim]  Restore: python modelfucker.py \"{path}\" --restore[/dim]")
 
-    # ── Inference ─────────────────────────────────────────────────────────────
-    if not args.no_chat and not args.dry_run:
+    elif dry_run:
         console.print()
-        launch_chat = Confirm.ask(
-            "[cyan]Launch inference session?[/cyan] "
-            "(chat with the corrupted model right now)",
-            default=True,
+        corrupt_model(
+            path=path,
+            intensity=intensity or 1024,
+            skip=args.skip,
+            seed=seed,
+            dry_run=True,
+            show_stats=args.stats,
+            workers=args.workers,
         )
 
-        if launch_chat:
-            from inference import InferenceSession, run_chat
+    # ── Inference ─────────────────────────────────────────────────────────────
+    if not args.no_chat and not dry_run:
+        console.print()
+        from inference import InferenceSession, run_chat
 
-            session = InferenceSession(
-                model_path=path,
-                n_ctx=args.n_ctx,
-                n_threads=args.workers,
-            )
+        session = InferenceSession(
+            model_path=path,
+            n_ctx=args.n_ctx,
+            n_threads=args.workers,
+        )
 
-            run_chat(
-                session=session,
-                model_path=path,
-                corruption_passes=corruption_passes,
-                skip=args.skip,
-                workers=args.workers,
-                max_tokens=args.max_tokens,
-                temperature=args.temp,
-            )
+        run_chat(
+            session=session,
+            model_path=path,
+            corruption_passes=corruption_passes,
+            skip=args.skip,
+            workers=args.workers,
+            max_tokens=args.max_tokens,
+            temperature=args.temp,
+        )
 
     console.print(f"\n[cyan]We hope you liked your fucking experience[/cyan]\n")
 

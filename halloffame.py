@@ -40,94 +40,138 @@ def submit_to_hall_of_fame(
     corruption_passes: list,
     chat_history: list[dict],
 ) -> None:
+    from rich.table import Table
+    from rich.columns import Columns
+    from rich import box as rich_box
+
     if not corruption_passes:
         warn("Can't submit — no corruption passes recorded. Corrupt the model first.")
         return
-
     if not chat_history:
         warn("Can't submit — no chat history. Have a conversation first.")
         return
 
-    section("Hall of Fame Submission")
-    mf("Preparing your entry for posterity...")
+    # ── Header ───────────────────────────────────────────────────────────────
+    console.print()
+    console.print(Panel(
+        "[bold white]Submit your corrupted model's finest moment to the public Hall of Fame.\n"
+        "[dim]This opens a Pull Request on GitHub. Your transcript will be public.[/dim]",
+        title="[bold yellow]◈ HALL OF FAME SUBMISSION ◈[/bold yellow]",
+        border_style="yellow",
+        padding=(1, 4),
+    ))
     console.print()
 
-    # ── Select messages ──────────────────────────────────────────────────────
-    n_messages = len(chat_history)
-    raw = Prompt.ask(
-        f"[cyan]How many messages to include?[/cyan] (last N of {n_messages})",
-        default=str(min(n_messages, 6)),
-    )
-    try:
-        n = int(raw)
-        n = max(1, min(n, n_messages))
-    except ValueError:
-        err("That's not a number.")
-        return
+    # ── Select messages ───────────────────────────────────────────────────────
+    n_total = len(chat_history)
+    console.print(f"[dim]You have [bold]{n_total}[/bold] messages in this session.[/dim]")
+    while True:
+        raw = Prompt.ask(
+            f"[cyan]How many to include?[/cyan] [dim](last N)[/dim]",
+            default=str(min(n_total, 6)),
+        )
+        try:
+            n = int(raw)
+            if 1 <= n <= n_total:
+                break
+            err(f"Pick a number between 1 and {n_total}.")
+        except ValueError:
+            err("Numbers only.")
 
     selected = chat_history[-n:]
 
-    # ── Preview ──────────────────────────────────────────────────────────────
-    section("Message Preview")
+    # ── Message preview panel ─────────────────────────────────────────────────
+    preview_lines = []
     for msg in selected:
-        role_style = "cyan" if msg["role"] == "user" else "magenta"
-        console.print(f"[{role_style}]{msg['role']}:[/{role_style}] {msg['content'][:300]}")
+        if msg["role"] == "user":
+            preview_lines.append(f"[cyan]you >[/cyan] {msg['content'][:200]}")
+        else:
+            preview_lines.append(f"[magenta]model >[/magenta] {msg['content'][:200]}")
+        preview_lines.append("")
+
+    console.print(Panel(
+        "\n".join(preview_lines).strip(),
+        title=f"[bold white]Selected Transcript[/bold white] [dim]({n} messages)[/dim]",
+        border_style="dim cyan",
+        padding=(1, 2),
+    ))
     console.print()
 
-    # ── Notable output ───────────────────────────────────────────────────────
+    # ── Notable output ────────────────────────────────────────────────────────
     model_responses = [m["content"] for m in selected if m["role"] == "assistant"]
     auto_notable = model_responses[-1][:200] if model_responses else "(none)"
+    console.print("[dim]This line gets highlighted in the Hall of Fame entry.[/dim]")
     notable = Prompt.ask(
-        "[cyan]Notable output to highlight[/cyan] (auto-filled, edit or leave blank to use)",
+        "[cyan]Notable output[/cyan]",
         default=auto_notable,
     )
-
-    # ── Confirm ──────────────────────────────────────────────────────────────
     console.print()
-    if not Confirm.ask("[yellow]This will open a public PR on GitHub. Proceed?[/yellow]", default=False):
-        warn("Submission cancelled — your secrets are safe (for now)")
+
+    # ── Stats summary ─────────────────────────────────────────────────────────
+    total_flips = sum(p.total_flips for p in corruption_passes)
+    intensity_str = ", ".join(str(p.intensity) for p in corruption_passes)
+    model_name = Path(model_path).stem
+
+    stats_table = Table(box=rich_box.SIMPLE, show_header=False, padding=(0, 2))
+    stats_table.add_column(style="dim white", no_wrap=True)
+    stats_table.add_column(style="bold white")
+    stats_table.add_row("Model",        Path(model_path).name)
+    stats_table.add_row("Intensity",    intensity_str)
+    stats_table.add_row("Passes",       str(len(corruption_passes)))
+    stats_table.add_row("Total flips",  f"{total_flips:,}")
+    stats_table.add_row("Messages",     str(n))
+
+    console.print(Panel(
+        stats_table,
+        title="[bold white]Entry Summary[/bold white]",
+        border_style="dim",
+        padding=(0, 1),
+    ))
+    console.print()
+
+    # ── Confirm ───────────────────────────────────────────────────────────────
+    if not Confirm.ask(
+        "[yellow]This will be public on GitHub.[/yellow] Open a PR?",
+        default=False,
+    ):
+        console.print("[dim]Cancelled. Your experiments remain secret.[/dim]\n")
         return
 
-    # ── Authenticate ─────────────────────────────────────────────────────────
+    # ── Authenticate ──────────────────────────────────────────────────────────
     console.print()
     mf("Authenticating with GitHub...")
-
     token = _get_github_token()
     if not token:
         return
 
-    # ── Format entry ─────────────────────────────────────────────────────────
-    model_name = Path(model_path).stem
-    intensity_str = ", ".join(str(p.intensity) for p in corruption_passes)
-    total_flips = sum(p.total_flips for p in corruption_passes)
+    # ── Build entry ───────────────────────────────────────────────────────────
     date_str = datetime.date.today().isoformat()
-
     github_username = _get_github_username(token)
     transcript_md = _format_transcript(selected)
 
-    entry = f"""
-## [{model_name}] — Intensity {intensity_str}
-**Submitted by:** @{github_username}
-**Date:** {date_str}
-**Model:** `{Path(model_path).name}`
-**Intensity:** {intensity_str}
-**Passes:** {len(corruption_passes)}
-**Total flips:** {total_flips:,}
-**Notable output:** {notable}
+    entry = (
+        f"\n## [{model_name}] — Intensity {intensity_str}\n"
+        f"**Submitted by:** @{github_username}  \n"
+        f"**Date:** {date_str}  \n"
+        f"**Model:** `{Path(model_path).name}`  \n"
+        f"**Intensity:** {intensity_str}  \n"
+        f"**Passes:** {len(corruption_passes)}  \n"
+        f"**Total flips:** {total_flips:,}  \n"
+        f"**Notable output:** {notable}\n\n"
+        f"### Transcript\n{transcript_md}\n\n---\n"
+    )
 
-### Transcript
-{transcript_md}
-
----
-"""
-
-    # ── Preview entry ─────────────────────────────────────────────────────────
-    section("Formatted Entry Preview")
-    console.print(Syntax(entry, "markdown", theme="monokai", word_wrap=True))
+    # ── Preview formatted entry ───────────────────────────────────────────────
+    console.print(Panel(
+        Syntax(entry, "markdown", theme="monokai", word_wrap=True),
+        title="[bold white]Formatted Hall of Fame Entry[/bold white]",
+        border_style="yellow",
+        padding=(1, 1),
+    ))
     console.print()
 
-    if not Confirm.ask("[yellow]Submit this entry?[/yellow]", default=True):
-        warn("Submission cancelled at final step — coward move but understandable")
+    if not Confirm.ask("[yellow]Ship it?[/yellow]", default=True):
+        console.print("[dim]Maybe next time.[/dim]\n")
         return
 
     # ── Open PR ───────────────────────────────────────────────────────────────
