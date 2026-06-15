@@ -19,13 +19,13 @@ from corrupt import CorruptPattern, AttentionMode
 
 # ── Fuckery presets ───────────────────────────────────────────────────────────
 FUCKERY_LEVELS = [
-    ("Untouched",         None,  "no corruption — just vibe"),
-    ("Barely Fucked",     4096,  "a gentle nudge"),
-    ("Kinda Fucked",      1024,  "something's off"),
-    ("Sorta Fucked",       256,  "noticeably unhinged"),
-    ("Pretty Fucked",       64,  "hold on to something"),
-    ("Completely Fucked",   16,  "barely coherent"),
-    ("Cosmically Fucked",    4,  "probably dead"),
+    ("Untouched",         None,  "a perfect gentleman — never even kissed it"),
+    ("Barely Fucked",     4096,  "just the tip — a gentle, respectful nudge"),
+    ("Kinda Fucked",      1024,  "second base. something's off and it knows"),
+    ("Sorta Fucked",       256,  "noticeably unhinged, breathing heavy"),
+    ("Pretty Fucked",       64,  "grab something, this is gonna get rough"),
+    ("Completely Fucked",   16,  "absolutely railed, barely forming words"),
+    ("Cosmically Fucked",    4,  "destroyed. it will never love again."),
 ]
 
 _LEVEL_COLORS = ["dim white", "green", "cyan", "yellow", "dark_orange", "red", "bold red"]
@@ -79,10 +79,10 @@ def pick_action(model_path: str) -> str:
     t = Table(box=box.ROUNDED, border_style="cyan", show_header=False, padding=(0, 3))
     t.add_column(style="bold white", no_wrap=True)
     t.add_column(style="dim white")
-    t.add_row("[0]  Corrupt",    "flip bits, break weights, lose sleep")
-    t.add_row("[1]  Just Chat",  "load model as-is and start talking")
+    t.add_row("[0]  Corrupt",    "have your way with it")
+    t.add_row("[1]  Just Chat",  "buy it dinner first, talk to it untouched")
     if backup_exists:
-        t.add_row("[2]  Restore",   "put it back the way it was")
+        t.add_row("[2]  Restore",   "undo your sins, restore its dignity")
     console.print(t)
     console.print()
 
@@ -118,7 +118,7 @@ def pick_fuckery_level() -> Optional[int]:
     t.add_row(
         f"[dim white]\\[{len(FUCKERY_LEVELS)}][/dim white]  [magenta]Custom Fuck:[/magenta]",
         "[dim](you decide)[/dim]",
-        "for the scientists",
+        "freak mode — set your own depth",
     )
     console.print(t)
     console.print()
@@ -156,10 +156,10 @@ def pick_pattern() -> CorruptPattern:
     t.add_column(style="bold white", no_wrap=True)
     t.add_column(style="dim white")
     rows = [
-        ("[0]  Random",   "random bit flip at each position  [dim](default chaos)[/dim]"),
-        ("[1]  Pattern",  "always flip bit 3  [dim](structured decay)[/dim]"),
-        ("[2]  Zeros",    "zero out bytes entirely  [dim](erase, don't flip)[/dim]"),
-        ("[3]  Mixture",  "50% random flips + 50% zeros  [dim](maximum variety)[/dim]"),
+        ("[0]  Random",   "wild, unpredictable, no rhythm  [dim](default chaos)[/dim]"),
+        ("[1]  Pattern",  "same spot, every time  [dim](methodical, kinky)[/dim]"),
+        ("[2]  Zeros",    "wipe bytes clean out  [dim](no survivors)[/dim]"),
+        ("[3]  Mixture",  "half flips, half wipes  [dim](can't make up its mind)[/dim]"),
     ]
     for label, desc in rows:
         t.add_row(label, desc)
@@ -223,9 +223,9 @@ def pick_attention_mode(model_path: str) -> tuple:
     at = Table(box=box.ROUNDED, border_style="yellow", show_header=False, padding=(0, 3))
     at.add_column(style="bold white", no_wrap=True)
     at.add_column(style="dim white")
-    at.add_row("[0]  Ignore",   "corrupt everything uniformly")
-    at.add_row("[1]  Protect",  f"skip attention tensors ({attn_mb:.0f} MB safe)")
-    at.add_row("[2]  Target",   f"ONLY corrupt attention tensors ({attn_mb:.0f} MB affected)")
+    at.add_row("[0]  Ignore",   "no mercy, no favorites — ravage it all")
+    at.add_row("[1]  Protect",  f"leave the brain alone, wreck everything else ({attn_mb:.0f} MB spared)")
+    at.add_row("[2]  Target",   f"go straight for the brain — attention only ({attn_mb:.0f} MB)")
     console.print(at)
     console.print()
 
@@ -298,7 +298,7 @@ def confirm_plan(
     console.print(Panel(t, title="[bold cyan]READY TO FUCK[/bold cyan]",
                         border_style="cyan", padding=(0, 1)))
     console.print()
-    return Confirm.ask("[cyan]Proceed?[/cyan]", default=True)
+    return Confirm.ask("[cyan]Last chance to be a decent person. Proceed?[/cyan]", default=True)
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -327,7 +327,7 @@ def run_wizard(model_path: Optional[str] = None) -> dict:
     seed           = pick_seed()
 
     if not confirm_plan(model_path, intensity, pattern, attn_mode, seed, len(attn_ranges)):
-        console.print("[dim]Aborted.[/dim]\n")
+        console.print("[dim]Cold feet. The model lives another day.[/dim]\n")
         raise SystemExit(0)
 
     return {

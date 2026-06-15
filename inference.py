@@ -173,7 +173,7 @@ class InferenceSession:
 
     def _load(self):
         from corrupt import _GPU
-        mf(f"Loading [bold]{self.model_path}[/bold] — this takes a sec, grab a coffee...")
+        mf(f"Waking up [bold]{self.model_path}[/bold] — give it a sec to realize what's happening...")
         t0 = time.time()
 
         use_gpu_layers = _GPU.backend != "cpu"
@@ -238,7 +238,7 @@ class InferenceSession:
             gc.collect()
 
     def reload(self):
-        mf("Reloading model from disk — absorbing the new corruption...")
+        mf("Reloading from disk — letting it soak up everything you just did to it...")
         self.unload()
         self._load()
 
@@ -358,11 +358,11 @@ def run_chat(
     if not HAS_PROMPT_TOOLKIT:
         warn("prompt_toolkit not installed — no autocomplete. Fix: pip install prompt_toolkit")
 
-    section("Inference Session")
+    section("Pillow Talk")
     console.print(
-        f"[dim]Model is {'[red]corrupted[/red]' if corruption_passes else '[green]ready[/green]'}"
-        f" — type a message or [bold magenta]/help[/bold magenta] for commands."
-        f"{'  Tab completes commands.' if HAS_PROMPT_TOOLKIT else ''}[/dim]\n"
+        f"[dim]Model is {'[red]thoroughly ruined[/red]' if corruption_passes else '[green]pure and untouched[/green]'}"
+        f" — say something to it, or [bold magenta]/help[/bold magenta] for what you can do to it."
+        f"{'  Tab finishes your commands.' if HAS_PROMPT_TOOLKIT else ''}[/dim]\n"
     )
 
     while True:
@@ -468,9 +468,9 @@ def run_chat(
                         prompt, max_tokens=max_tokens, temperature=temperature,
                     )
         except Exception as exc:
-            # Heavily corrupted models can segfault or throw. That's a feature.
-            err(f"Model had a moment: {exc}")
-            response = "[CORRUPTED OUTPUT — the model is speaking in tongues]"
+            # Heavily corrupted models can segfault or throw. That's foreplay.
+            err(f"The model just went limp on us: {exc}")
+            response = "[the model is babbling incoherently and possibly drooling]"
             prompt_tps, gen_tps = 0.0, 0.0
 
         console.print(response.strip())
@@ -480,7 +480,7 @@ def run_chat(
 
         history.append({"role": "assistant", "content": response.strip()})
 
-    console.print(f"\n[cyan]◈ Hackerbbrine — session ended ◈[/cyan]\n")
+    console.print(f"\n[cyan]◈ Hackerbbrine — thanks for coming ◈[/cyan]\n")
     return history
 
 

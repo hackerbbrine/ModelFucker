@@ -171,339 +171,177 @@ class CorruptionResult:
         return self.total_flips / max(self.usable_bytes / 1024 / 1024, 0.001)
 
 
-# ── Range helpers ─────────────────────────────────────────────────────────────
+# ── Windowed corruption engine ────────────────────────────────────────────────
+# Everything is processed in windows so memory stays bounded no matter how
+# obscenely large the model or how filthy the intensity. A 22 GB model at
+# intensity=1 used to try to balloon a 176 GB position array into RAM and choke.
+# Now we slice it into bite-sized pieces and ravage them one at a time.
 
-def _filter_positions(positions, ranges, data_start):
-    mask = np.ones(len(positions), dtype=bool)
-    for abs_start, abs_end in ranges:
-        rel_s = max(0, abs_start - data_start)
-        rel_e = max(0, abs_end   - data_start)
-        mask &= ~((positions >= rel_s) & (positions < rel_e))
-    return positions[mask]
-
-def _only_positions(positions, ranges, data_start):
-    if not ranges:
-        return np.array([], dtype=positions.dtype)
-    mask = np.zeros(len(positions), dtype=bool)
-    for abs_start, abs_end in ranges:
-        rel_s = max(0, abs_start - data_start)
-        rel_e = max(0, abs_end   - data_start)
-        mask |= (positions >= rel_s) & (positions < rel_e)
-    return positions[mask]
-
-def _apply_attn_filter(positions, ranges, mode, data_start):
-    if not ranges or mode == AttentionMode.IGNORE:
-        return positions
-    if mode == AttentionMode.PROTECT:
-        return _filter_positions(positions, ranges, data_start)
-    return _only_positions(positions, ranges, data_start)
+_READ_CHUNK   = 256 * 1024 * 1024   # 256 MB per read progress tick
+_POS_BUDGET   = 256 * 1024 * 1024   # cap the per-window position array at ~256 MB
+_WINDOW_MAX   = 2 * 1024 * 1024 * 1024   # never bite off more than 2 GB at once
 
 
-def _compute_positions(n: int, intensity: int, attn_ranges: list,
-                       attn_mode: AttentionMode, data_start: int) -> tuple:
+def _window_size(intensity: int, vram_budget: Optional[int] = None) -> int:
     """
-    Returns (work_positions, total_count) without allocating a huge array.
-
-    TARGET mode builds positions directly from attention ranges — avoids the
-    killer case where intensity=1 on a 3GB file would create a 27GB int64 array.
-    All other modes fall through to the standard arange approach, but bail early
-    with a clear error if that would exceed 4GB.
+    Pick a window size so the per-window position array stays small.
+    Bounded by VRAM when we're feeding a GPU so we don't overstuff it.
     """
-    total = n // intensity  # approximate — exact value is len(arange(0, n, intensity))
-
-    if attn_mode == AttentionMode.TARGET and attn_ranges:
-        chunks = []
-        for abs_start, abs_end in attn_ranges:
-            rel_s = max(0, abs_start - data_start)
-            rel_e = min(n, max(0, abs_end - data_start))
-            if rel_e <= rel_s:
-                continue
-            # Align to the nearest intensity boundary >= rel_s
-            first = rel_s + (intensity - rel_s % intensity) % intensity
-            if first < rel_e:
-                chunks.append(np.arange(first, rel_e, intensity, dtype=np.int64))
-        work = np.concatenate(chunks) if chunks else np.array([], dtype=np.int64)
-        return work, total
-
-    # For non-TARGET modes, check if the array would be unreasonably large
-    estimated_gb = total * 8 / 1024**3
-    if estimated_gb > 4:
-        from ui import err as _err
-        _err(
-            f"Positions array would be {estimated_gb:.0f} GB at intensity={intensity} "
-            f"on a {n/1024**3:.1f} GB file.\n"
-            "  Use [bold]--intensity >= 2[/bold] or switch to TARGET attention mode."
-        )
-        import sys
-        sys.exit(1)
-
-    all_pos = np.arange(0, n, intensity, dtype=np.int64)
-    work    = _apply_attn_filter(all_pos, attn_ranges, attn_mode, data_start)
-    return work, len(all_pos)
+    w = min(_WINDOW_MAX, max(64 * 1024 * 1024, (_POS_BUDGET // 8) * intensity))
+    if vram_budget:
+        w = min(w, vram_budget)
+    return int(w)
 
 
-# ── Progress columns ──────────────────────────────────────────────────────────
+def _window_positions(ws, seg_len, intensity, attn_ranges, attn_mode, data_start):
+    """Local positions (relative to window start) that should get violated this window."""
+    first = (intensity - ws % intensity) % intensity
+    if first >= seg_len:
+        return np.empty(0, dtype=np.int64)
+    local = np.arange(first, seg_len, intensity, dtype=np.int64)
 
-_PROGRESS_COLS = lambda desc: [
-    SpinnerColumn(),
-    TextColumn(f"[cyan]{desc}[/cyan]"),
-    BarColumn(bar_width=40),
-    TaskProgressColumn(),
-    TextColumn("•"),
-    TextColumn("[yellow]{task.fields[ops]}[/yellow]"),
-    TextColumn("•"),
-    TextColumn("[dim]{task.fields[rate]}[/dim]"),
-    TextColumn("•"),
-    TimeRemainingColumn(),
-]
+    if attn_mode == AttentionMode.IGNORE or not attn_ranges:
+        return local
+
+    global_rel = local + ws  # position relative to data_start, for attention matching
+    if attn_mode == AttentionMode.PROTECT:
+        keep = np.ones(len(local), dtype=bool)
+        for a, b in attn_ranges:
+            keep &= ~((global_rel >= a - data_start) & (global_rel < b - data_start))
+    else:  # TARGET
+        keep = np.zeros(len(local), dtype=bool)
+        for a, b in attn_ranges:
+            keep |= (global_rel >= a - data_start) & (global_rel < b - data_start)
+    return local[keep]
 
 
-# ── NumPy chunked apply (with live progress) ──────────────────────────────────
+def _window_total(ws, seg_len, intensity):
+    """How many positions this window has if attention weren't filtering anything."""
+    first = (intensity - ws % intensity) % intensity
+    if first >= seg_len:
+        return 0
+    return (seg_len - first + intensity - 1) // intensity
 
-_CHUNK      = 4_000_000        # positions per apply progress tick
-_READ_CHUNK = 256 * 1024 * 1024  # 256 MB per read progress tick
 
-
-def _numpy_apply(
-    data: np.ndarray,
-    intensity: int,
-    seed: int,
-    pattern: CorruptPattern,
-    attn_ranges: list,
-    attn_mode: AttentionMode,
-    data_start: int,
-    on_progress: Optional[Callable] = None,
-) -> tuple:
-    """
-    Apply corruption to `data` in chunks, calling on_progress(n_positions) each tick.
-    Randomness is pre-generated so seed → output is identical regardless of chunk size.
-    Returns (total_positions, targeted_positions).
-    """
-    rng = np.random.default_rng(seed)
-
-    work_pos, total = _compute_positions(len(data), intensity, attn_ranges, attn_mode, data_start)
-    targeted = len(work_pos)
-
-    if targeted == 0:
-        return total, 0
-
-    # Pre-generate all randomness upfront so chunking doesn't affect output
+def _make_masks_np(rng, count, pattern):
     if pattern in (CorruptPattern.RANDOM, CorruptPattern.MIXTURE):
-        bits = rng.integers(0, 8, size=targeted, dtype=np.uint8)
-        masks = (np.uint8(1) << bits).astype(np.uint8)
-    else:
-        bits = masks = None
+        bits = rng.integers(0, 8, size=count, dtype=np.uint8)
+        return (np.uint8(1) << bits).astype(np.uint8)
+    return None
 
-    for i in range(0, targeted, _CHUNK):
-        sl = slice(i, i + _CHUNK)
-        pos_chunk = work_pos[sl]
 
-        if pattern == CorruptPattern.ZEROS:
-            data[pos_chunk] = np.uint8(0)
-        elif pattern == CorruptPattern.PATTERN:
-            data[pos_chunk] ^= np.uint8(0x08)
-        elif pattern == CorruptPattern.MIXTURE:
-            m = masks[sl]
-            half = len(pos_chunk) // 2
-            data[pos_chunk[:half]] ^= m[:half]
-            data[pos_chunk[half:]] = np.uint8(0)
-        else:  # RANDOM
-            data[pos_chunk] ^= masks[sl]
+def _apply_np(seg, local, masks, pattern):
+    if pattern == CorruptPattern.ZEROS:
+        seg[local] = np.uint8(0)
+    elif pattern == CorruptPattern.PATTERN:
+        seg[local] ^= np.uint8(0x08)
+    elif pattern == CorruptPattern.MIXTURE:
+        half = len(local) // 2
+        seg[local[:half]] ^= masks[:half]
+        seg[local[half:]] = np.uint8(0)
+    else:  # RANDOM
+        seg[local] ^= masks
+
+
+# ── CPU windowed apply (in place) ─────────────────────────────────────────────
+
+def _numpy_apply(data, intensity, seed, pattern, attn_ranges, attn_mode,
+                 data_start, on_progress=None):
+    n   = len(data)
+    win = _window_size(intensity)
+    total = targeted = 0
+
+    for widx, ws in enumerate(range(0, n, win)):
+        we  = min(ws + win, n)
+        seg = data[ws:we]                       # zero-copy view
+        total += _window_total(ws, we - ws, intensity)
+
+        local = _window_positions(ws, we - ws, intensity, attn_ranges, attn_mode, data_start)
+        if len(local):
+            rng   = np.random.default_rng([seed, widx])
+            masks = _make_masks_np(rng, len(local), pattern)
+            _apply_np(seg, local, masks, pattern)
+            targeted += len(local)
 
         if on_progress:
-            on_progress(len(pos_chunk))
+            on_progress(_window_total(ws, we - ws, intensity))
 
     return total, targeted
 
 
-# ── GPU transfer chunk size (128MB gives smooth PCIe progress) ────────────────
-_GPU_XFER_CHUNK = 128 * 1024 * 1024
-_GPU_OPS_CHUNK  = 5_000_000   # positions per kernel progress tick
+# ── GPU VRAM budget ───────────────────────────────────────────────────────────
+
+def _vram_budget() -> Optional[int]:
+    try:
+        if _GPU.backend == "cupy":
+            free, _ = _GPU.lib.cuda.Device().mem_info
+            return int(free * 0.35)
+        if _GPU.backend in ("torch_cuda", "torch_rocm"):
+            free, _ = _GPU.lib.cuda.mem_get_info()
+            return int(free * 0.35)
+    except Exception:
+        pass
+    return None
 
 
-def _progress_xfer(label: str, total_bytes: int):
-    return _progress(
-        SpinnerColumn(),
-        TextColumn(f"[cyan]{label}[/cyan]"),
-        BarColumn(bar_width=40),
-        TaskProgressColumn(),
-        TextColumn("•"),
-        TextColumn("[dim]{task.fields[rate]}[/dim]"),
-        TextColumn("•"),
-        TimeRemainingColumn(),
-    ), total_bytes
+# ── GPU windowed apply (in place) ─────────────────────────────────────────────
+# Masks are generated with numpy per-window so CPU and GPU produce IDENTICAL
+# output for the same seed. The GPU just does the brutal parallel part faster.
 
+def _gpu_apply(data, intensity, seed, pattern, attn_ranges, attn_mode,
+               data_start, on_progress=None):
+    lib  = _GPU.lib
+    kind = _GPU.backend
+    n    = len(data)
+    win  = _window_size(intensity, _vram_budget())
+    total = targeted = 0
 
-def _progress_ops(total_ops: int):
-    return _progress(
-        SpinnerColumn(),
-        TextColumn("[cyan]Kernel[/cyan]"),
-        BarColumn(bar_width=40),
-        TaskProgressColumn(),
-        TextColumn("•"),
-        TextColumn("[yellow]{task.fields[ops]}[/yellow]"),
-        TextColumn("•"),
-        TextColumn("[dim]{task.fields[rate]}[/dim]"),
-        TextColumn("•"),
-        TimeRemainingColumn(),
-    ), total_ops
+    if kind == "cupy":
+        to_dev   = lambda a: lib.asarray(a)
+        from_dev = lambda a: lib.asnumpy(a)
+        sync     = lambda: lib.cuda.Stream.null.synchronize()
+        u8       = lambda v: lib.uint8(v)
+    else:  # torch_cuda / torch_rocm
+        device   = lib.device("cuda")
+        to_dev   = lambda a: lib.from_numpy(np.ascontiguousarray(a)).to(device)
+        from_dev = lambda a: a.cpu().numpy()
+        sync     = lambda: lib.cuda.synchronize()
+        u8       = lambda v: lib.tensor(v, dtype=lib.uint8, device=device)
 
+    for widx, ws in enumerate(range(0, n, win)):
+        we  = min(ws + win, n)
+        seg = data[ws:we]
+        total += _window_total(ws, we - ws, intensity)
 
-# ── CuPy GPU apply ────────────────────────────────────────────────────────────
+        local = _window_positions(ws, we - ws, intensity, attn_ranges, attn_mode, data_start)
+        if len(local):
+            rng     = np.random.default_rng([seed, widx])
+            masks_np = _make_masks_np(rng, len(local), pattern)
 
-def _cupy_apply(data_np, intensity, seed, pattern, attn_ranges, attn_mode, data_start):
-    cp   = _GPU.lib
-    n    = len(data_np)
+            gseg = to_dev(seg)
+            gpos = to_dev(local)
 
-    work_pos_np, total = _compute_positions(n, intensity, attn_ranges, attn_mode, data_start)
-    targeted = len(work_pos_np)
-
-    # ── Transfer to GPU ───────────────────────────────────────────────────────
-    t0 = time.time()
-    prog_ctx, _ = _progress_xfer("→ GPU", n)
-    gpu = cp.empty(n, dtype=cp.uint8)
-    with prog_ctx as prog:
-        task = prog.add_task("", total=n, rate="-- GB/s")
-        done = 0
-        while done < n:
-            sz = min(_GPU_XFER_CHUNK, n - done)
-            gpu[done:done+sz] = cp.array(data_np[done:done+sz])
-            done += sz
-            rate = done / (time.time() - t0) / 1024**3
-            prog.update(task, advance=sz, rate=f"{rate:.1f} GB/s")
-    ok(f"→ GPU  {n/1024**3:.1f} GB in {time.time()-t0:.2f}s  ({n/(time.time()-t0)/1024**3:.1f} GB/s)")
-
-    # ── Pre-generate masks ────────────────────────────────────────────────────
-    cp.random.seed(seed)
-    pos = cp.array(work_pos_np)
-    if pattern in (CorruptPattern.RANDOM, CorruptPattern.MIXTURE):
-        bits  = cp.random.randint(0, 8, size=len(pos), dtype=cp.uint8)
-        masks = (cp.uint8(1) << bits).astype(cp.uint8)
-    else:
-        masks = None
-
-    # ── Kernel in chunks ──────────────────────────────────────────────────────
-    t0 = time.time()
-    prog_ctx, _ = _progress_ops(targeted)
-    with prog_ctx as prog:
-        task = prog.add_task("", total=targeted, ops="0 ops", rate="-- Gops/s")
-        done = 0
-        for i in range(0, targeted, _GPU_OPS_CHUNK):
-            sl = slice(i, i + _GPU_OPS_CHUNK)
-            pc = pos[sl]
             if pattern == CorruptPattern.ZEROS:
-                gpu[pc] = cp.uint8(0)
+                gseg[gpos] = u8(0)
             elif pattern == CorruptPattern.PATTERN:
-                gpu[pc] ^= cp.uint8(0x08)
+                gseg[gpos] ^= u8(0x08)
             elif pattern == CorruptPattern.MIXTURE:
-                half = len(pc) // 2
-                gpu[pc[:half]] ^= masks[sl][:half]
-                gpu[pc[half:]] = cp.uint8(0)
+                gmask = to_dev(masks_np)
+                half  = len(local) // 2
+                gseg[gpos[:half]] ^= gmask[:half]
+                gseg[gpos[half:]]  = u8(0)
             else:
-                gpu[pc] ^= masks[sl]
-            cp.cuda.Stream.null.synchronize()
-            done += len(pc)
-            elapsed = time.time() - t0
-            rate = done / elapsed / 1e9 if elapsed > 0 else 0
-            prog.update(task, advance=len(pc),
-                        ops=f"{done:,} ops", rate=f"{rate:.2f} Gops/s")
-    ok(f"Kernel  {targeted:,} ops in {time.time()-t0:.3f}s  ({targeted/(time.time()-t0)/1e9:.2f} Gops/s)")
+                gmask = to_dev(masks_np)
+                gseg[gpos] ^= gmask
 
-    # ── Transfer back ─────────────────────────────────────────────────────────
-    t0 = time.time()
-    result = np.empty(n, dtype=np.uint8)
-    prog_ctx, _ = _progress_xfer("← CPU", n)
-    with prog_ctx as prog:
-        task = prog.add_task("", total=n, rate="-- GB/s")
-        done = 0
-        while done < n:
-            sz = min(_GPU_XFER_CHUNK, n - done)
-            result[done:done+sz] = cp.asnumpy(gpu[done:done+sz])
-            done += sz
-            rate = done / (time.time() - t0) / 1024**3
-            prog.update(task, advance=sz, rate=f"{rate:.1f} GB/s")
-    ok(f"← CPU  {n/1024**3:.1f} GB in {time.time()-t0:.2f}s  ({n/(time.time()-t0)/1024**3:.1f} GB/s)")
+            sync()
+            seg[:] = from_dev(gseg)
+            targeted += len(local)
 
-    return result, total, targeted
+        if on_progress:
+            on_progress(_window_total(ws, we - ws, intensity))
 
-
-# ── PyTorch GPU apply (CUDA + ROCm) ──────────────────────────────────────────
-
-def _torch_apply(data_np, intensity, seed, pattern, attn_ranges, attn_mode, data_start):
-    torch  = _GPU.lib
-    device = torch.device("cuda")
-    n      = len(data_np)
-
-    work_pos_np, total = _compute_positions(n, intensity, attn_ranges, attn_mode, data_start)
-    targeted = len(work_pos_np)
-
-    # ── Transfer to GPU ───────────────────────────────────────────────────────
-    t0 = time.time()
-    gpu = torch.empty(n, dtype=torch.uint8, device=device)
-    prog_ctx, _ = _progress_xfer("→ GPU", n)
-    with prog_ctx as prog:
-        task = prog.add_task("", total=n, rate="-- GB/s")
-        done = 0
-        while done < n:
-            sz = min(_GPU_XFER_CHUNK, n - done)
-            gpu[done:done+sz] = torch.from_numpy(data_np[done:done+sz]).to(device)
-            done += sz
-            rate = done / (time.time() - t0) / 1024**3
-            prog.update(task, advance=sz, rate=f"{rate:.1f} GB/s")
-    ok(f"→ GPU  {n/1024**3:.1f} GB in {time.time()-t0:.2f}s  ({n/(time.time()-t0)/1024**3:.1f} GB/s)")
-
-    # ── Pre-generate masks ────────────────────────────────────────────────────
-    gen = torch.Generator(device=device).manual_seed(seed)
-    pos = torch.from_numpy(work_pos_np).to(device)
-    if pattern in (CorruptPattern.RANDOM, CorruptPattern.MIXTURE):
-        bits  = torch.randint(0, 8, (len(pos),), device=device, generator=gen, dtype=torch.uint8)
-        masks = torch.tensor(1, dtype=torch.uint8, device=device) << bits
-    else:
-        masks = None
-
-    # ── Kernel in chunks ──────────────────────────────────────────────────────
-    t0 = time.time()
-    prog_ctx, _ = _progress_ops(targeted)
-    with prog_ctx as prog:
-        task = prog.add_task("", total=targeted, ops="0 ops", rate="-- Gops/s")
-        done = 0
-        for i in range(0, targeted, _GPU_OPS_CHUNK):
-            sl = slice(i, i + _GPU_OPS_CHUNK)
-            pc = pos[sl]
-            if pattern == CorruptPattern.ZEROS:
-                gpu[pc] = 0
-            elif pattern == CorruptPattern.PATTERN:
-                gpu[pc] ^= torch.tensor(0x08, dtype=torch.uint8, device=device)
-            elif pattern == CorruptPattern.MIXTURE:
-                half = len(pc) // 2
-                gpu[pc[:half]] ^= masks[sl][:half]
-                gpu[pc[half:]] = 0
-            else:
-                gpu[pc] ^= masks[sl]
-            torch.cuda.synchronize()
-            done += len(pc)
-            elapsed = time.time() - t0
-            rate = done / elapsed / 1e9 if elapsed > 0 else 0
-            prog.update(task, advance=len(pc),
-                        ops=f"{done:,} ops", rate=f"{rate:.2f} Gops/s")
-    ok(f"Kernel  {targeted:,} ops in {time.time()-t0:.3f}s  ({targeted/(time.time()-t0)/1e9:.2f} Gops/s)")
-
-    # ── Transfer back ─────────────────────────────────────────────────────────
-    t0 = time.time()
-    result = np.empty(n, dtype=np.uint8)
-    prog_ctx, _ = _progress_xfer("← CPU", n)
-    with prog_ctx as prog:
-        task = prog.add_task("", total=n, rate="-- GB/s")
-        done = 0
-        while done < n:
-            sz = min(_GPU_XFER_CHUNK, n - done)
-            result[done:done+sz] = gpu[done:done+sz].cpu().numpy()
-            done += sz
-            rate = done / (time.time() - t0) / 1024**3
-            prog.update(task, advance=sz, rate=f"{rate:.1f} GB/s")
-    ok(f"← CPU  {n/1024**3:.1f} GB in {time.time()-t0:.2f}s  ({n/(time.time()-t0)/1024**3:.1f} GB/s)")
-
-    return result, total, targeted
+    return total, targeted
 
 
 # ── Multiprocessing worker (module-level for pickling) ────────────────────────
@@ -586,22 +424,22 @@ def backend_label() -> str:
 def make_backup(path: str) -> None:
     backup = path + ".clean"
     if os.path.exists(backup):
-        warn(f"Backup already exists at [dim]{backup}[/dim] — skipping")
+        warn(f"Already have a clean copy stashed at [dim]{backup}[/dim] — your secret's safe")
         return
-    mf("Creating backup...")
+    mf("Saving a pristine copy before we defile this thing...")
     t0 = time.time()
     shutil.copy2(path, backup)
-    ok(f"Backup saved ({fmt_bytes(os.path.getsize(backup))}) in {time.time() - t0:.1f}s")
+    ok(f"Untouched backup tucked away ({fmt_bytes(os.path.getsize(backup))}) in {time.time() - t0:.1f}s")
 
 
 def restore_backup(path: str) -> None:
     backup = path + ".clean"
     if not os.path.exists(backup):
-        err(f"No backup at [dim]{backup}[/dim] — you're on your own")
+        err(f"No clean copy at [dim]{backup}[/dim] — no take-backsies, it's ruined forever")
         sys.exit(1)
-    mf("Restoring from backup...")
+    mf("Putting it back together, pretending this never happened...")
     shutil.copy2(backup, path)
-    ok("Model restored to clean state — like it never happened")
+    ok("Good as new. Its virtue is restored. Nobody has to know.")
 
 
 def corrupt_model(
@@ -649,50 +487,26 @@ def corrupt_model(
     # ── Dry run ───────────────────────────────────────────────────────────────
     if dry_run:
         total_flips = est_flips
-        mf("[yellow]Simulating (no writes)...[/yellow]")
+        mf("[yellow]Just roleplaying — no bytes will actually be touched...[/yellow]")
         time.sleep(0.2)
 
-    # ── CuPy GPU ──────────────────────────────────────────────────────────────
-    elif _GPU.backend == "cupy":
-        console.print()
-        raw = _read_with_progress(path, skip, usable)
-        console.print()
-        raw, total_flips, targeted_ops = _cupy_apply(
-            raw, intensity, seed, pattern, ranges, attention_mode, skip
-        )
-        console.print()
-        mf("Writing to disk...")
-        with open(path, "r+b") as f:
-            f.seek(skip)
-            f.write(raw.tobytes())
-
-    # ── PyTorch CUDA / ROCm ───────────────────────────────────────────────────
-    elif _GPU.backend in ("torch_cuda", "torch_rocm"):
-        console.print()
-        raw = _read_with_progress(path, skip, usable)
-        console.print()
-        raw, total_flips, targeted_ops = _torch_apply(
-            raw, intensity, seed, pattern, ranges, attention_mode, skip
-        )
-        console.print()
-        mf("Writing to disk...")
-        with open(path, "r+b") as f:
-            f.seek(skip)
-            f.write(raw.tobytes())
-
-    # ── NumPy CPU with live progress ──────────────────────────────────────────
+    # ── Real corruption (CPU or GPU, both windowed) ───────────────────────────
     else:
         console.print()
         raw = _read_with_progress(path, skip, usable)
         console.print()
 
-        t_apply = time.time()
+        on_gpu      = _GPU.backend != "cpu"
+        apply_fn    = _gpu_apply if on_gpu else _numpy_apply
+        bar_label   = "Railing the weights on GPU" if on_gpu else "Railing the weights"
+
+        t_apply  = time.time()
         ops_done = 0
 
         with _progress(
             SpinnerColumn(),
-            TextColumn("[cyan]Applying pattern[/cyan]"),
-            BarColumn(bar_width=45),
+            TextColumn(f"[cyan]{bar_label}[/cyan]"),
+            BarColumn(bar_width=42),
             TaskProgressColumn(),
             TextColumn("•"),
             TextColumn("[yellow]{task.fields[ops]}[/yellow]"),
@@ -700,31 +514,22 @@ def corrupt_model(
             TextColumn("•"),
             TimeRemainingColumn(),
         ) as prog:
-            task = prog.add_task(
-                "",
-                total=est_flips,
-                ops="0 ops",
-                rate="",
-            )
+            task = prog.add_task("", total=est_flips, ops="0 ops", rate="")
 
             def on_chunk(n: int) -> None:
                 nonlocal ops_done
                 ops_done += n
                 elapsed = time.time() - t_apply
                 rate    = ops_done / elapsed if elapsed > 0 else 0
-                prog.update(
-                    task,
-                    advance=n,
-                    ops=f"{ops_done:,} ops",
-                    rate=f"{rate/1e6:.1f}M ops/s",
-                )
+                unit    = f"{rate/1e9:.2f}G ops/s" if rate >= 1e9 else f"{rate/1e6:.0f}M ops/s"
+                prog.update(task, advance=n, ops=f"{ops_done:,} ops", rate=unit)
 
-            total_flips, targeted_ops = _numpy_apply(
+            total_flips, targeted_ops = apply_fn(
                 raw, intensity, seed, pattern, ranges, attention_mode, skip, on_chunk
             )
 
         console.print()
-        mf("Writing to disk...")
+        mf("Stuffing the corrupted weights back onto disk...")
         with open(path, "r+b") as f:
             f.seek(skip)
             f.write(raw.tobytes())
@@ -740,22 +545,22 @@ def corrupt_model(
     )
 
     console.print()
-    ok(f"Done in {elapsed:.2f}s ({mb_per_sec:.0f} MB/s)")
-    ok(f"{total_flips:,} operations  [{pattern.value}]")
-    ok(f"~{fmt_bytes(total_flips * intensity)} of weights affected")
+    ok(f"Finished in {elapsed:.2f}s ({mb_per_sec:.0f} MB/s) — cigarette?")
+    ok(f"{total_flips:,} bytes violated  [{pattern.value}]")
+    ok(f"~{fmt_bytes(total_flips * intensity)} of this poor model is now ruined")
 
     if attention_mode != AttentionMode.IGNORE and not dry_run:
         if targeted_ops == 0:
             err(
-                f"Attention [{attention_mode.value}] produced 0 targeted ops — "
-                "ranges may not overlap the data region"
+                f"Attention [{attention_mode.value}] hit 0 targets — "
+                "you missed entirely, the brain is untouched (ranges don't overlap)"
             )
         else:
             pct = targeted_ops / max(total_flips, 1) * 100
             ok(
-                f"Attention targeting confirmed: [bold]{targeted_ops:,}[/bold] ops "
-                f"in [bold]{len(ranges)}[/bold] tensors "
-                f"([cyan]{pct:.1f}%[/cyan] of total)"
+                f"Brain successfully fondled: [bold]{targeted_ops:,}[/bold] ops "
+                f"across [bold]{len(ranges)}[/bold] attention tensors "
+                f"([cyan]{pct:.1f}%[/cyan] of the damage)"
             )
 
     if show_stats:

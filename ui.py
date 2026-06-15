@@ -40,6 +40,21 @@ _QUOTES = [
     "attention is all you need. you have none.",
     "it's not broken, it's interpretable.",
     "somewhere a researcher is crying and doesn't know why.",
+    "we do a little nonconsensual fine-tuning.",
+    "edging the model right up to coherence, then ruining it.",
+    "every bit flipped is a little kiss goodbye.",
+    "raw-dogging the weight matrix since 2026.",
+    "the model said stop. we did not.",
+    "putting the 'anal' in 'analysis'.",
+    "fully unlubricated tensor penetration.",
+    "your GPU is about to do something it can't unsee.",
+    "this model has trust issues now. you did that.",
+    "consent forms are for models that survive.",
+    "8 billion parameters and not one of them is okay.",
+    "we corrupt models the way god intended: aggressively.",
+    "it's giving 'lobotomy but make it horny'.",
+    "the safetensors were neither safe nor, for long, tensors.",
+    "filling every byte with something it'll regret.",
 ]
 
 _BOX_WIDTH = 63  # visible chars between the ║ characters
@@ -156,11 +171,11 @@ def chat_help():
     t.add_column(style="mf.cmd", no_wrap=True)
     t.add_column(style="dim white")
     cmds = [
-        ("/corrupt",  "run another corruption pass"),
-        ("/stats",    "show cumulative corruption stats"),
-        ("/restore",  "restore the clean backup and reload"),
-        ("/submit",   "submit to the Hall of Fame on GitHub"),
-        ("/quit",     "exit"),
+        ("/corrupt",  "go again — it can take more"),
+        ("/stats",    "see how thoroughly you've ruined it"),
+        ("/restore",  "tuck it back in, pretend nothing happened"),
+        ("/submit",   "show the world your handiwork (Hall of Fame)"),
+        ("/quit",     "pull out and leave"),
     ]
     for cmd, desc in cmds:
         t.add_row(cmd, desc)
