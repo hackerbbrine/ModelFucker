@@ -305,29 +305,48 @@ def main():
 
     if not gpu_inference_built:
         if gpu.kind != "cpu":
-            warn("All GPU builds failed — installing CPU-only build")
+            warn("All GPU builds failed — installing CPU-only build so inference still works")
         _try_build("", "CPU-only")
         if gpu.kind != "cpu":
             print()
-            print("  GPU inference unavailable. Manual options:")
-            print("  Vulkan: CMAKE_ARGS=\"-DGGML_VULKAN=ON\" pip install llama-cpp-python --force-reinstall")
+            print("  GPU inference couldn't be built. The usual culprit on Windows is a")
+            print("  missing build toolchain — pick whichever matches your setup:")
+            print()
+            print("  [Vulkan — easiest for AMD] needs the Vulkan SDK (provides glslc):")
+            print("     1. Install: https://vulkan.lunarg.com/sdk/home#windows")
+            print("     2. Restart your terminal, then:")
+            print("        CMAKE_ARGS=\"-DGGML_VULKAN=ON\" pip install llama-cpp-python --force-reinstall --no-cache-dir")
             if gpu.kind == "amd":
-                print(f"  ROCm:   CMAKE_ARGS=\"-DGGML_HIPBLAS=ON -DAMDGPU_TARGETS={gpu.target}\" pip install llama-cpp-python --force-reinstall")
+                print()
+                print("  [ROCm] needs the AMD HIP SDK installed and on PATH:")
+                print(f"        CMAKE_ARGS=\"-DGGML_HIPBLAS=ON -DAMDGPU_TARGETS={gpu.target}\" pip install llama-cpp-python --force-reinstall --no-cache-dir")
             elif gpu.kind == "nvidia":
-                print("  CUDA:   CMAKE_ARGS=\"-DGGML_CUDA=ON\" pip install llama-cpp-python --force-reinstall")
+                print()
+                print("  [CUDA] needs the CUDA Toolkit installed:")
+                print("        CMAKE_ARGS=\"-DGGML_CUDA=ON\" pip install llama-cpp-python --force-reinstall --no-cache-dir")
 
-    # ── Summary ───────────────────────────────────────────────────────────────
+    # ── Summary (tells the TRUTH about what actually got built) ────────────────
     header("Done")
     print()
+
+    # Corruption uses PyTorch/CuPy — independent of the llama build
     if gpu.kind == "nvidia":
         ok(f"Corruption backend: GPU · CUDA · {gpu.name}")
-        ok("Inference backend:  GPU · CUDA")
     elif gpu.kind == "amd":
         ok(f"Corruption backend: GPU · ROCm · {gpu.name}")
-        ok(f"Inference backend:  GPU · ROCm ({gpu.target or 'target auto-detected at runtime'})")
     else:
         ok("Corruption backend: CPU (NumPy)")
-        ok("Inference backend:  CPU")
+
+    # Inference reflects whether the GPU llama build actually succeeded
+    if gpu_inference_built:
+        kind_label = "CUDA" if gpu.kind == "nvidia" else "ROCm/Vulkan"
+        ok(f"Inference backend:  GPU · {kind_label}  [the fast, filthy way]")
+    else:
+        if gpu.kind != "cpu":
+            warn("Inference backend:  CPU only  [GPU build failed — see options above]")
+            warn("Corruption will still scream on the GPU; only chatting is stuck on CPU.")
+        else:
+            ok("Inference backend:  CPU")
 
     print()
     print("  Run:  python modelfucker.py")
