@@ -202,9 +202,9 @@ def import_model(model: FoundModel, symlink: bool = False) -> Path:
         dest_path.symlink_to(model.path)
         ok(f"Symlinked: [dim]{dest_path}[/dim]")
     else:
-        mf(f"Copying {fmt_bytes(model.size)} → [dim]{dest_path.name}[/dim]...")
+        mf(f"Dragging {fmt_bytes(model.size)} home → [dim]{dest_path.name}[/dim]...")
         shutil.copy2(model.path, dest_path)
-        ok(f"Imported: [dim]{dest_path}[/dim]")
+        ok(f"It's ours now: [dim]{dest_path}[/dim]")
 
     return dest_path
 
@@ -233,8 +233,8 @@ def run_import_ui() -> Optional[Path]:
     Interactive import wizard.
     Returns the path to the imported model, or None if the user cancelled.
     """
-    section("Import Model")
-    mf("Scanning for models from installed frameworks...")
+    section("Bring Me a Victim")
+    mf("Rounding up every model on this machine for you to choose from...")
     console.print()
 
     all_models = discover_all()
@@ -247,8 +247,8 @@ def run_import_ui() -> Optional[Path]:
                 local.extend(_scan_ggufs(fw_dir, "imported"))
 
     if not all_models and not local:
-        warn("No models found from any supported framework.")
-        warn("Supported: LM Studio · Ollama · Jan · GPT4All · Llamafile")
+        warn("Couldn't find a single model to defile on this machine.")
+        warn("We frisk: LM Studio · Ollama · Jan · GPT4All · Llamafile")
         console.print()
         path = Prompt.ask("[cyan]Enter model path manually[/cyan]").strip().strip('"')
         return Path(path) if path and Path(path).exists() else None

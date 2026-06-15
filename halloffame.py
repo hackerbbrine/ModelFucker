@@ -385,7 +385,7 @@ def _open_pr(
             json={
                 "title": f"Hall of Fame: {model_name} @ intensity {intensity_str}",
                 "body": (
-                    f"Auto-submitted via ModelFucker v3.0\n\n"
+                    f"Auto-submitted via ModelFucker v3.1\n\n"
                     f"Model: `{model_name}` | Intensity: {intensity_str} | Date: {date_str}"
                 ),
                 "head": branch,

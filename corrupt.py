@@ -161,10 +161,10 @@ class CorruptionResult:
 
     @property
     def impact_label(self) -> str:
-        if self.intensity >= 1024: return "LIGHT"
-        if self.intensity >= 256:  return "MODERATE"
-        if self.intensity >= 64:   return "HEAVY"
-        return "CATASTROPHIC"
+        if self.intensity >= 1024: return "JUST THE TIP"
+        if self.intensity >= 256:  return "GETTING FRISKY"
+        if self.intensity >= 64:   return "RAILED"
+        return "ABSOLUTELY DESTROYED"
 
     @property
     def flips_per_mb(self) -> float:

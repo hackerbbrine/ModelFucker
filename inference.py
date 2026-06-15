@@ -215,6 +215,15 @@ class InferenceSession:
                     n_threads=self.n_threads,
                     verbose=False,
                 )
+        except Exception as e:
+            err(f"llama.cpp couldn't get it up: [dim]{str(e).splitlines()[0][:120]}[/dim]")
+            warn(
+                "Usually means your installed [bold]llama-cpp-python is too old[/bold] to recognize\n"
+                "  this model's architecture (brand-new models need a fresh build).\n"
+                "  Fix: [bold]pip install llama-cpp-python --upgrade --force-reinstall --no-cache-dir[/bold]\n"
+                "  (or re-run [bold]python install.py[/bold] to rebuild with GPU support)"
+            )
+            raise SystemExit(1)
         finally:
             _restore_win32_console(_console_state)
 
@@ -567,11 +576,14 @@ def _detect_template(model_path: str) -> tuple:
         warn(f"Header parsing failed ({exc})")
 
     # ── 3. Filename guessing ──────────────────────────────────────────────────
-    name = model_path.lower()
+    # Use the basename only — the full path can contain misleading dirs like
+    # "ollama" (which contains "llama") and poison the match.
+    import os as _os
+    name = _os.path.basename(model_path).lower()
     key  = None
-    if "gemma"   in name:                                    key = "gemma"
+    if   "qwen" in name or "hermes" in name or "openchat" in name: key = "chatml"
+    elif "gemma" in name:                                          key = "gemma"
     elif "llama" in name or "mistral" in name or "mixtral" in name: key = "llama"
-    elif "qwen"  in name or "hermes"  in name or "openchat" in name: key = "chatml"
 
     if key:
         warn(
@@ -612,8 +624,9 @@ def _arch_to_template(arch: str) -> Optional[str]:
     arch = arch.lower()
     if arch == "gemma4":                                            return "gemma4"
     if "gemma" in arch:                                            return "gemma"
+    if "qwen" in arch:                                             return "chatml"   # qwen2, qwen3, qwen3.6...
+    if arch in ("phi3", "phi", "yi", "hermes", "openchat"):        return "chatml"
     if arch in ("llama", "mistral", "mixtral", "falcon", "starcoder"): return "llama"
-    if arch in ("qwen2", "qwen", "phi3", "phi", "yi"):             return "chatml"
     return None
 
 

@@ -1,5 +1,5 @@
 """
-ui.py — Rich terminal UI for ModelFucker v3.0
+ui.py — Rich terminal UI for ModelFucker v3.1
 All the pretty stuff so the chaos looks intentional.
 """
 
@@ -67,7 +67,7 @@ def _header(quote: str) -> str:
     return (
         "╔═══════════════════════════════════════════════════════════════╗\n"
         "║                                                               ║\n"
-        "║   [bold white]M O D E L   F U C K E R   v 3 . 0[/bold white]                       ║\n"
+        "║   [bold white]M O D E L   F U C K E R   v 3 . 1[/bold white]                       ║\n"
         "║                                                               ║\n"
         f'║   [dim]by Hackerbbrine[/dim]{" " * author_pad}║\n'
         f'║   [dim]{padded}[/dim]{" " * quote_pad}║\n'
@@ -149,10 +149,10 @@ def corruption_stats_table(
     mb_per_sec: float,
 ) -> None:
     impact = (
-        "LIGHT" if intensity >= 1024
-        else "MODERATE" if intensity >= 256
-        else "HEAVY" if intensity >= 64
-        else "[bold red]CATASTROPHIC[/bold red]"
+        "JUST THE TIP" if intensity >= 1024
+        else "GETTING FRISKY" if intensity >= 256
+        else "RAILED" if intensity >= 64
+        else "[bold red]ABSOLUTELY DESTROYED[/bold red]"
     )
     t = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
     t.add_column(style="dim white", no_wrap=True)

@@ -177,16 +177,26 @@ def parse(path: str) -> GGUFInfo:
         tensors = sorted(tensors, key=lambda t: t.name)
 
         # ── Attention head count ───────────────────────────────────────────
+        # Newer models (qwen3.6, etc.) store these as per-layer LISTS, not scalars.
+        # Take the first element if it's a list, and never let a weird value crash us.
+        def _as_int(v) -> int:
+            try:
+                if isinstance(v, (list, tuple)):
+                    return int(v[0]) if v else 0
+                return int(v)
+            except (TypeError, ValueError):
+                return 0
+
         head_count = 0
         for key in metadata:
             if 'head_count' in key and 'kv' not in key:
-                head_count = int(metadata[key])
+                head_count = _as_int(metadata[key])
                 break
 
         kv_count = 0
         for key in metadata:
             if 'head_count_kv' in key:
-                kv_count = int(metadata[key])
+                kv_count = _as_int(metadata[key])
                 break
 
     return GGUFInfo(
