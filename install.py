@@ -296,8 +296,13 @@ def main():
     if gpu.kind == "nvidia":
         gpu_inference_built = _try_build("-DGGML_CUDA=ON", "CUDA")
     elif gpu.kind == "amd":
-        target_flag = f"-DGGML_HIPBLAS=ON -DAMDGPU_TARGETS={gpu.target}" if gpu.target else "-DGGML_HIPBLAS=ON"
-        gpu_inference_built = _try_build(target_flag, "ROCm/HIP")
+        # AMD on Windows with the pip ROCm SDK is fiddly (compiler paths, rc.exe,
+        # device-lib paths, HIP_PLATFORM). build_rocm.py handles all of it.
+        info("Building ROCm via build_rocm.py (handles the pip ROCm SDK toolchain)...")
+        target_arg = gpu.target or "gfx1201"
+        r = subprocess.run([sys.executable, "build_rocm.py", target_arg],
+                           cwd=os.path.dirname(os.path.abspath(__file__)), check=False)
+        gpu_inference_built = (r.returncode == 0) and _llama_gpu_works()
 
     if not gpu_inference_built and gpu.kind != "cpu":
         warn("Trying Vulkan (works on AMD/NVIDIA without ROCm/CUDA SDK, slightly slower)...")

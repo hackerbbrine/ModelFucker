@@ -93,6 +93,29 @@ def _prompt_input(session: "PromptSession | None", corrupted: bool) -> tuple[str
             return input(f"\033[96myou{indicator}\033[0m > ").strip(), None
     return input(f"\033[96myou{indicator}\033[0m > ").strip(), None
 
+def _add_rocm_dll_path() -> None:
+    """
+    On Windows, the HIP backend in llama-cpp-python needs the ROCm runtime DLLs
+    (amdhip64, hipblas, rocblas) on the DLL search path BEFORE llama_cpp imports,
+    or it silently falls back to CPU. The pip ROCm SDK keeps them in its bin dir.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import subprocess
+        root = subprocess.run(
+            [sys.executable, "-m", "rocm_sdk", "path", "--root"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        binp = __import__("os").path.join(root, "bin")
+        if root and __import__("os").path.isdir(binp):
+            __import__("os").add_dll_directory(binp)
+            __import__("os").environ["PATH"] = binp + __import__("os").pathsep + __import__("os").environ.get("PATH", "")
+    except Exception:
+        pass
+
+_add_rocm_dll_path()
+
 try:
     import ctypes
     from llama_cpp import Llama
