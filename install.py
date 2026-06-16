@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ModelFucker v3.1 — Installer
+ModelFucker v4.0 — Installer
 Detects your GPU, picks the right build flags, installs everything.
 Run this once before using modelfucker.py.
 """
@@ -202,7 +202,7 @@ def llama_env(gpu: GPU) -> dict:
 
 def main():
     print()
-    print("  ModelFucker v3.1 — Installer")
+    print("  ModelFucker v4.0 — Installer")
     print("  by Hackerbbrine")
     print()
 

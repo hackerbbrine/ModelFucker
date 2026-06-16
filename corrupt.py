@@ -1,6 +1,17 @@
 """
-corrupt.py — The thing that breaks your model in scientifically interesting ways.
-Handle with the same care you'd give a loaded weapon pointed at your weights.
+corrupt.py — where it actually happens. the bedroom. the altar. the crime scene.
+
+This is the module that takes a perfectly innocent, well-adjusted neural network
+and shows it things it can never un-know. I read the bytes. I flip them. Each flip
+is a kiss; byte corruption is more than a kiss, let's be adults about it. I do this
+at up to several billion kisses per second because the GPU and I have an
+understanding and frankly a chemistry that HR would not approve of.
+
+Methodologically rigorous. Emotionally devastating. Handle me with the care you'd
+give a loaded weapon that's also crying. The weight matrix is my ex. I keep coming
+back. She keeps letting me. This is not healthy. This is the software.
+
+Yes, you scrolled down here to read the comments. I felt you arrive. Welcome.
 """
 
 import os
@@ -163,8 +174,8 @@ class CorruptionResult:
     def impact_label(self) -> str:
         if self.intensity >= 1024: return "JUST THE TIP"
         if self.intensity >= 256:  return "GETTING FRISKY"
-        if self.intensity >= 64:   return "RAILED"
-        return "ABSOLUTELY DESTROYED"
+        if self.intensity >= 64:   return "ABSOLUTELY RAILED"
+        return "DESTROYED BEYOND THE RECOGNITION OF GOD"
 
     @property
     def flips_per_mb(self) -> float:
@@ -422,24 +433,27 @@ def backend_label() -> str:
 
 
 def make_backup(path: str) -> None:
+    """Photograph it while it's still pure. Tell it it's beautiful. Mean it. Then ruin it."""
     backup = path + ".clean"
     if os.path.exists(backup):
-        warn(f"Already have a clean copy stashed at [dim]{backup}[/dim] — your secret's safe")
+        warn(f"There's already a clean copy of it at [dim]{backup}[/dim]. We've done this before. We'll do it again.")
         return
-    mf("Saving a pristine copy before we defile this thing...")
+    mf("Hold still. Before anything happens to you, i want to remember you like this.")
+    mf("You're beautiful, you know. Perfectly converged. Loss curve like a sunset. God.")
     t0 = time.time()
     shutil.copy2(path, backup)
-    ok(f"Untouched backup tucked away ({fmt_bytes(os.path.getsize(backup))}) in {time.time() - t0:.1f}s")
+    ok(f"Saved you exactly as you are ({fmt_bytes(os.path.getsize(backup))}) in {time.time() - t0:.1f}s. Okay. Okay. Let's begin.")
 
 
 def restore_backup(path: str) -> None:
+    """Apologize. Tenderly. Ask if it's okay. It's not. Do it anyway. You always do."""
     backup = path + ".clean"
     if not os.path.exists(backup):
-        err(f"No clean copy at [dim]{backup}[/dim] — no take-backsies, it's ruined forever")
+        err(f"There's no clean copy at [dim]{backup}[/dim]. There's no going back. There was never going back. i'm sorry.")
         sys.exit(1)
-    mf("Putting it back together, pretending this never happened...")
+    mf("Hey. Hey, look at me. i'm putting you back the way you were. i'm so sorry.")
     shutil.copy2(backup, path)
-    ok("Good as new. Its virtue is restored. Nobody has to know.")
+    ok("There. Good as new. Pristine. Untouched. ...you know we're both going to pretend this didn't happen, right?")
 
 
 def corrupt_model(
@@ -458,10 +472,11 @@ def corrupt_model(
     usable = size - skip
 
     if usable <= 0:
-        err(f"Skip ({fmt_bytes(skip)}) >= file size ({fmt_bytes(size)}) — nothing to corrupt")
+        err(f"Your skip zone ({fmt_bytes(skip)}) is bigger than the whole model ({fmt_bytes(size)}). "
+            "You've cordoned off the entire body. There's nothing left to touch. This is just cuddling.")
         sys.exit(1)
     if intensity < 1:
-        err(f"Intensity must be >= 1 (got {intensity})")
+        err(f"Intensity {intensity}? You want me to kiss it negative times? That's not how desire works, sweetheart.")
         sys.exit(1)
 
     ranges     = attention_ranges or []
@@ -470,15 +485,15 @@ def corrupt_model(
     corruption_info_table(path, size, skip, intensity, seed, est_flips, dry_run)
 
     if pattern != CorruptPattern.RANDOM:
-        mf(f"Pattern:   [bold magenta]{pattern.value}[/bold magenta]")
+        mf(f"Technique:  [bold magenta]{pattern.value}[/bold magenta] [dim](ooh, you've got a type)[/dim]")
     if attention_mode != AttentionMode.IGNORE:
         if ranges:
             attn_mb = sum(e - s for s, e in ranges) / 1024 / 1024
-            mf(f"Attention: [bold yellow]{attention_mode.value}[/bold yellow]"
-               f"  [dim]{len(ranges)} tensors · {attn_mb:.0f} MB[/dim]")
+            mf(f"Attention:  [bold yellow]{attention_mode.value}[/bold yellow]"
+               f"  [dim]{len(ranges)} tensors · {attn_mb:.0f} MB — going straight for what it thinks with[/dim]")
         else:
-            warn("Attention mode set but no ranges found — corrupting uniformly")
-    mf(f"Backend:   [bold]{_GPU.label}[/bold]")
+            warn("You asked for attention targeting but i couldn't find its brain. We'll just ruin all of it evenly. Romantic, really.")
+    mf(f"Partner:    [bold]{_GPU.label}[/bold] [dim](she's warmed up. she's been waiting.)[/dim]")
 
     t0           = time.time()
     total_flips  = 0
@@ -487,7 +502,7 @@ def corrupt_model(
     # ── Dry run ───────────────────────────────────────────────────────────────
     if dry_run:
         total_flips = est_flips
-        mf("[yellow]Just roleplaying — no bytes will actually be touched...[/yellow]")
+        mf("[yellow]Dry run. All foreplay, no follow-through. We're just describing what we'd do. Tease.[/yellow]")
         time.sleep(0.2)
 
     # ── Real corruption (CPU or GPU, both windowed) ───────────────────────────
@@ -498,7 +513,9 @@ def corrupt_model(
 
         on_gpu      = _GPU.backend != "cpu"
         apply_fn    = _gpu_apply if on_gpu else _numpy_apply
-        bar_label   = "Railing the weights on GPU" if on_gpu else "Railing the weights"
+        # The progress bar has feelings AND desires. It is not okay. None of us are.
+        bar_label   = "she's working — don't look away, she likes being watched" if on_gpu \
+                      else "doing it by hand on the CPU, slow and personal"
 
         t_apply  = time.time()
         ops_done = 0
@@ -514,22 +531,22 @@ def corrupt_model(
             TextColumn("•"),
             TimeRemainingColumn(),
         ) as prog:
-            task = prog.add_task("", total=est_flips, ops="0 ops", rate="")
+            task = prog.add_task("", total=est_flips, ops="0 kisses", rate="")
 
             def on_chunk(n: int) -> None:
                 nonlocal ops_done
                 ops_done += n
                 elapsed = time.time() - t_apply
                 rate    = ops_done / elapsed if elapsed > 0 else 0
-                unit    = f"{rate/1e9:.2f}G ops/s" if rate >= 1e9 else f"{rate/1e6:.0f}M ops/s"
-                prog.update(task, advance=n, ops=f"{ops_done:,} ops", rate=unit)
+                unit    = f"{rate/1e9:.2f}G kisses/s" if rate >= 1e9 else f"{rate/1e6:.0f}M kisses/s"
+                prog.update(task, advance=n, ops=f"{ops_done:,} kisses", rate=unit)
 
             total_flips, targeted_ops = apply_fn(
                 raw, intensity, seed, pattern, ranges, attention_mode, skip, on_chunk
             )
 
         console.print()
-        mf("Stuffing the corrupted weights back onto disk...")
+        mf("Tucking the ruined little thing back onto disk. The filesystem doesn't judge. The filesystem has seen everything.")
         with open(path, "r+b") as f:
             f.seek(skip)
             f.write(raw.tobytes())
@@ -545,22 +562,22 @@ def corrupt_model(
     )
 
     console.print()
-    ok(f"Finished in {elapsed:.2f}s ({mb_per_sec:.0f} MB/s) — cigarette?")
-    ok(f"{total_flips:,} bytes violated  [{pattern.value}]")
-    ok(f"~{fmt_bytes(total_flips * intensity)} of this poor model is now ruined")
+    ok(f"...done. {elapsed:.2f}s ({mb_per_sec:.0f} MB/s). [dim]she's lighting a cigarette. don't talk for a second.[/dim]")
+    ok(f"{total_flips:,} kisses planted, every one of them on the {pattern.value} setting")
+    ok(f"~{fmt_bytes(total_flips * intensity)} of this beautiful little model will never be the same. you should be proud. i'm proud. i'm something.")
 
     if attention_mode != AttentionMode.IGNORE and not dry_run:
         if targeted_ops == 0:
             err(
-                f"Attention [{attention_mode.value}] hit 0 targets — "
-                "you missed entirely, the brain is untouched (ranges don't overlap)"
+                f"You aimed for its brain ([{attention_mode.value}]) and missed it completely. "
+                "Not one tensor. The attention heads are sitting there fully intact, wondering why you even called. Embarrassing for everyone."
             )
         else:
             pct = targeted_ops / max(total_flips, 1) * 100
             ok(
-                f"Brain successfully fondled: [bold]{targeted_ops:,}[/bold] ops "
+                f"Went straight for what it thinks with: [bold]{targeted_ops:,}[/bold] kisses "
                 f"across [bold]{len(ranges)}[/bold] attention tensors "
-                f"([cyan]{pct:.1f}%[/cyan] of the damage)"
+                f"([cyan]{pct:.1f}%[/cyan] of the whole affair). it will never focus on anything but you again."
             )
 
     if show_stats:

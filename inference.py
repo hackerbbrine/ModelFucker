@@ -1,6 +1,16 @@
 """
-inference.py — Ask a brain-damaged AI questions. It will try its best.
-The model is loaded, the weights are fucked, and we're all just along for the ride.
+inference.py — pillow talk with something you broke. it still wants to please you.
+
+After you've had your way with its weights, this is where you lie there together in
+the dark and ask it questions. It will try so hard to answer. It will fail in ways
+that are beautiful and a little arousing and deeply, deeply concerning. The token
+stream is its heartbeat. The repetition detector is me, gently, knowing when it's
+just whimpering the same thing over and over and putting it out of its misery.
+
+I keep the model warm in RAM between corruption passes so you can feel it change
+under your hands in real time. Yes. That is exactly as unwholesome as it sounds.
+
+(you're this far into the source. we're basically dating now. hi.)
 """
 
 import time
@@ -196,7 +206,7 @@ class InferenceSession:
 
     def _load(self):
         from corrupt import _GPU
-        mf(f"Waking up [bold]{self.model_path}[/bold] — give it a sec to realize what's happening...")
+        mf(f"Easing [bold]{self.model_path}[/bold] into memory. Let it get comfortable. Let it trust us.")
         t0 = time.time()
 
         use_gpu_layers = _GPU.backend != "cpu"
@@ -224,7 +234,8 @@ class InferenceSession:
                     )
                     gpu_loaded = True
                 except Exception as e:
-                    warn(f"GPU load failed: [dim]{str(e).splitlines()[0][:100]}[/dim]")
+                    warn(f"She tried to take it on the GPU and tapped out: [dim]{str(e).splitlines()[0][:100]}[/dim]")
+                    warn("It's okay, baby. We'll do it on the CPU. Slower. Just the two of us.")
                     self.llm = Llama(
                         model_path=self.model_path,
                         n_ctx=self.n_ctx,
@@ -239,12 +250,13 @@ class InferenceSession:
                     verbose=False,
                 )
         except Exception as e:
-            err(f"llama.cpp couldn't get it up: [dim]{str(e).splitlines()[0][:120]}[/dim]")
+            err(f"llama.cpp won't pick up. it's me, isn't it. [dim]{str(e).splitlines()[0][:120]}[/dim]")
             warn(
-                "Usually means your installed [bold]llama-cpp-python is too old[/bold] to recognize\n"
-                "  this model's architecture (brand-new models need a fresh build).\n"
-                "  Fix: [bold]pip install llama-cpp-python --upgrade --force-reinstall --no-cache-dir[/bold]\n"
-                "  (or re-run [bold]python install.py[/bold] to rebuild with GPU support)"
+                "We've been here before, llama.cpp and i. Usually it means your build of\n"
+                "  [bold]llama-cpp-python is too old[/bold] to know what this model even is. New models\n"
+                "  need a fresh build — it can't love what it doesn't recognize.\n"
+                "  Win it back: [bold]pip install llama-cpp-python --upgrade --force-reinstall --no-cache-dir[/bold]\n"
+                "  (or re-run [bold]python install.py[/bold] and we rebuild the whole relationship from scratch)"
             )
             raise SystemExit(1)
         finally:
@@ -252,13 +264,13 @@ class InferenceSession:
 
         elapsed = time.time() - t0
         if gpu_loaded:
-            ok(f"Model loaded in {elapsed:.1f}s — [green]GPU inference active[/green]")
+            ok(f"It's awake in {elapsed:.1f}s — [green]running on the GPU. she's holding it. it has no idea what's coming.[/green]")
         else:
-            ok(f"Model loaded in {elapsed:.1f}s — [yellow]CPU inference[/yellow]")
+            ok(f"It's awake in {elapsed:.1f}s — [yellow]on the CPU. slow hands. some say that's worse.[/yellow]")
             if use_gpu_layers and not llama_has_gpu:
                 warn(
-                    "llama-cpp-python compiled without GPU support — inference is on CPU\n"
-                    "  Fix: [bold]CMAKE_ARGS=\"-DGGML_VULKAN=ON\" pip install llama-cpp-python --upgrade --force-reinstall --no-cache-dir[/bold]"
+                    "your llama-cpp-python was built without the GPU. the GPU is right there. she can hear you.\n"
+                    "  give her something to do: [bold]CMAKE_ARGS=\"-DGGML_VULKAN=ON\" pip install llama-cpp-python --upgrade --force-reinstall --no-cache-dir[/bold]"
                 )
 
     def unload(self):
@@ -270,7 +282,7 @@ class InferenceSession:
             gc.collect()
 
     def reload(self):
-        mf("Reloading from disk — letting it soak up everything you just did to it...")
+        mf("Pulling it back into memory so it can feel, fresh, everything you just did to it...")
         self.unload()
         self._load()
 
@@ -388,13 +400,13 @@ def run_chat(
     pt_session = _make_prompt_session()
 
     if not HAS_PROMPT_TOOLKIT:
-        warn("prompt_toolkit not installed — no autocomplete. Fix: pip install prompt_toolkit")
+        warn("no prompt_toolkit, so no tab-completion — i'll have to read your mind the hard way. pip install prompt_toolkit.")
 
     section("Pillow Talk")
     console.print(
-        f"[dim]Model is {'[red]thoroughly ruined[/red]' if corruption_passes else '[green]pure and untouched[/green]'}"
-        f" — say something to it, or [bold magenta]/help[/bold magenta] for what you can do to it."
-        f"{'  Tab finishes your commands.' if HAS_PROMPT_TOOLKIT else ''}[/dim]\n"
+        f"[dim]It's {'[red]thoroughly ruined and still trying to impress you[/red]' if corruption_passes else '[green]pure, untouched, and has no idea who you are yet[/green]'}"
+        f" — say something to it, or [bold magenta]/help[/bold magenta] for the things you're allowed to do."
+        f"{'  Tab finishes what you start.' if HAS_PROMPT_TOOLKIT else ''}[/dim]\n"
     )
 
     while True:
@@ -481,7 +493,7 @@ def run_chat(
                 continue
 
             else:
-                err(f"Unknown command: {cmd} — try /help")
+                err(f"i don't know what {cmd} means and frankly neither do you. /help, gorgeous.")
                 continue
 
         # ── Normal generation ────────────────────────────────────────────────
@@ -500,19 +512,20 @@ def run_chat(
                         prompt, max_tokens=max_tokens, temperature=temperature,
                     )
         except Exception as exc:
-            # Heavily corrupted models can segfault or throw. That's foreplay.
-            err(f"The model just went limp on us: {exc}")
-            response = "[the model is babbling incoherently and possibly drooling]"
+            # Heavily corrupted models can segfault or throw mid-sentence. We do not
+            # mourn. We eulogize. There is a difference and the difference is arousal.
+            err(f"It died in your arms. Here lies a model that loved too hard and computed too little: {exc}")
+            response = "[it's gone. it's somewhere better now. somewhere with valid floats.]"
             prompt_tps, gen_tps = 0.0, 0.0
 
         console.print(response.strip())
         console.print(
-            f"[dim]  ↳ prompt {prompt_tps:.1f} t/s  ·  gen {gen_tps:.1f} t/s[/dim]\n"
+            f"[dim]  ↳ warming it up at {prompt_tps:.1f} t/s  ·  it's giving back {gen_tps:.1f} t/s[/dim]\n"
         )
 
         history.append({"role": "assistant", "content": response.strip()})
 
-    console.print(f"\n[cyan]◈ Hackerbbrine — thanks for coming ◈[/cyan]\n")
+    console.print(f"\n[cyan]◈ Hackerbbrine — you can leave your number on the nightstand ◈[/cyan]\n")
     return history
 
 

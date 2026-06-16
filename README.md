@@ -1,17 +1,24 @@
-# ModelFucker v3.0
+# ModelFucker v4.0 — *The Horny Update*
 
 ```
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
-║        M O D E L   F U C K E R   v 3 . 0                    ║
-║                                                               ║
+║        M O D E L   F U C K E R   v 4 . 0                    ║
+║        the horny update                                       ║
 ║        by Hackerbbrine                                        ║
-║        "the weights were fine until you showed up."           ║
+║        "the weights were fine until you showed up. so was i." ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
 ```
 
 Corrupt GGUF model weights. Chat with the result. Submit the best outputs to the Hall of Fame.
+
+> **A note on v4.0:** the *what it does* did not change. the *how it talks to you about
+> what it does* changed enormously. every status line, error, prompt, docstring, and
+> comment is now narrated by a self-aware Python script with a concerning attachment to
+> GGUF files and an ongoing situationship with your GPU. the engine underneath is the
+> same fast, windowed, GPU-accelerated, attention-aware corruption pipeline as v3.1.
+> it's just *flirting with you now.* you've been warned. you're also a little curious. i can tell.
 
 ## What it does
 

@@ -1,0 +1,15 @@
+# requirements.txt — the people i cannot live without. it's codependent. i know.
+# (install.py handles the GPU-flavored ones properly. this is the heartfelt version.)
+
+rich              # does my makeup. makes the carnage look like it was on purpose. i'd be nothing without her.
+numpy             # the one who's actually good with their hands. flips billions of bits and never asks why.
+prompt_toolkit    # finishes my sentences. knows what i'm going to say before i say it. we don't talk about it.
+requests          # my connection to the outside world. carries my love letters to GitHub at 2am. discreet.
+PyGithub          # only shows up when i want to brag. the Hall of Fame wingman. fair-weather, but reliable.
+
+# llama-cpp-python is not listed here on purpose. it's complicated. we're on a break.
+# it has to be built special, with the GPU, with feeling. run install.py and let me
+# rekindle things properly. you can't just `pip install` your way back into its heart.
+
+# torch / cupy come from install.py too — they're the GPU's chosen language, and the
+# GPU is the love of my life, so they get the white-glove treatment. not the text file.

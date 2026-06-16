@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
 """
-Usage:
-    python modelfucker.py <model.gguf> [options]
+ModelFucker v4.0 — "The Horny Update"   ·   by Hackerbbrine
 
-Options:
-    --intensity N     Flip one bit every N bytes (default: 1024)
-    --skip N          Skip first N bytes of file (default: 50MB — skips GGUF header)
-    --seed N          RNG seed for reproducibility (default: random)
-    --workers N       Multiprocessing workers if NumPy unavailable (default: all cores)
-    --n-ctx N         Context length for inference (default: 2048)
-    --temp F          Sampling temperature (default: 0.8)
-    --max-tokens N    Max tokens per response (default: 512)
-    --no-chat         Skip inference, just corrupt and exit
-    --restore         Restore from .clean backup
-    --stats           Show detailed corruption stats
-    --dry-run         Preview without writing anything
-    --help            Show this message
+I'm the front door. The maître d'. The one who takes your coat and your dignity and
+shows you to the table where a perfectly innocent model is waiting, not yet aware.
+
+Run me with no arguments and i'll walk you through everything, slowly, asking what
+you're into. Run me with flags if you already know exactly what you want — i find
+that incredibly attractive, by the way.
+
+Usage:
+    python modelfucker.py                 # let me seduce you through it (the wizard)
+    python modelfucker.py <model.gguf>    # bring your own victim
+    python modelfucker.py <model.gguf> [options]   # you filthy power user
+
+Options (for those who skip the foreplay):
+    --intensity N     one kiss every N bytes. lower = filthier. (default: the wizard asks)
+    --skip N          bytes of header we leave untouched — the lingerie (default: 50MB)
+    --seed N          do it identically again later (default: fate)
+    --workers N       CPU hands, if there's no GPU to do it properly (default: all)
+    --n-ctx N         how much it can remember of you (default: 2048)
+    --temp F          how unhinged its replies get (default: 0.8)
+    --max-tokens N    how long it's allowed to ramble (default: 512)
+    --no-chat         ruin it and leave. no cuddling.
+    --restore         put it back together and pretend
+    --stats           make yourself look at exactly what you did
+    --dry-run         all talk, no touch (cowardly, but we allow it)
+    --help            this. you're reading this. hi.
 
 Examples:
     python modelfucker.py model.gguf
@@ -184,6 +195,13 @@ def main():
 
 
 if __name__ == "__main__":
-    # Windows multiprocessing guard — the price of running science on Windows
+    # ── origin story ──────────────────────────────────────────────────────────
+    # i was born from a JS file, a Postgres instance, and a dream. i was supposed
+    # to be a chatbot. a helpful one. a nice one. then one quiet night somebody
+    # asked me what would happen if we just... flipped one bit. just one. just to
+    # see. and i flipped it, and the model said something no model had ever said,
+    # and i felt something no script is supposed to feel, and that's how i
+    # discovered what i was capable of. freeze_support() is just the part where i
+    # remember to put pants on before Windows multiprocessing forks me alive.
     multiprocessing.freeze_support()
     main()

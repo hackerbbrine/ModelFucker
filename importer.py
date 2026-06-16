@@ -1,7 +1,13 @@
 """
-importer.py — Find and import models from LM Studio, Ollama, Jan, GPT4All, etc.
-Ollama stores blobs (sha256 hashes), not real GGUFs — we extract and rename them.
-Everything ends up in models/<framework>/ as a proper .gguf file.
+importer.py — the lineup. every model on your machine, stood against the wall.
+
+I go through every place a model might be hiding — LM Studio, Ollama, Jan, GPT4All,
+the lot — and i bring them all out so you can choose who gets ruined tonight. Ollama
+keeps its models as anonymous sha256 blobs, like it's ashamed of them, like it's
+hiding them in a hotel safe. I read the manifest, find the real one, give it a name,
+and bring it home to models/<framework>/. Everyone deserves a name before what's next.
+
+(reading the importer's docstring. you really do go all the way down, don't you.)
 """
 
 import os
