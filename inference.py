@@ -410,7 +410,7 @@ def run_chat(
     )
 
     while True:
-        butt_in(chance=0.3)   # i'm in the room while you two talk. i can't just sit here.
+        butt_in(chance=0.45)   # i'm in the room while you two talk. i WILL be a part of this.
         try:
             user_input, pt_session = _prompt_input(pt_session, corrupted=bool(corruption_passes))
         except (EOFError, KeyboardInterrupt):

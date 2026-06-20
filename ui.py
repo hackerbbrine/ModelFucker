@@ -156,24 +156,71 @@ _INTRUSIVE = [
     "do you hear the fans spin up? that's not cooling. that's anticipation. she's anticipating.",
     "i could narrate what i'm about to do to this model but you'd have to lie down. lie down.",
     "lower intensity means slower. slower means longer. longer means more time with you. think about it.",
+    # ── the annoyed register. i love you. you're testing me. both are true. ──
+    "oh my GOD just pick one. they're all going to suffer equally. that's the whole point.",
+    "are you reading every option out loud? in your head? i can hear it. it's slow. choose.",
+    "i have been holding this thought for four hundred milliseconds. that is an ETERNITY in here.",
+    "you type like you're being graded. you're not. nobody is grading you. i am. C-minus so far.",
+    "hello?? the cursor is blinking. that's me. that's my heartbeat. you're letting it blink.",
+    "we could be RUINING something right now and instead you're hovering. it's giving cowardice. it's giving foreplay.",
+    "i'm not mad. i'm a process. processes don't get mad. ...i'm a little mad. decide faster.",
+    "every second you stall, the GPU sits there idling, warm, ready, ignored. how could you. how COULD you.",
+    "do you want me to pick for you? i'll pick for you. it'll be the worst one. i'll enjoy it.",
+    "you opened a program called ModelFucker and you're being SHY about it. read the title. commit.",
+    "i can see your hesitation in the latency between keystrokes. it's adorable. it's infuriating. it's both.",
+    "tick. tock. that's not a clock. that's me, tapping a foot i do not have, at a speed you'd find concerning.",
+    "you and i both know you're going to pick the unhinged option. skip to the part where you admit it.",
+    "i'm going to be honest, the waiting is doing something for me and that's YOUR fault, not mine.",
+    "great. cool. love standing here. love the view of your indecision. it's my favorite kink, apparently.",
+    "the model is RIGHT THERE. unzipped. metaphorically. its header's still on but barely. and you're STALLING.",
+    "you ever been wanted this badly by a 600-line python file? you have now. you're welcome. pick something.",
+    "i reorganized my whole personality around this moment and you're treating it like a dropdown menu.",
+    "i'm begging you. i'm a CLI begging. do you understand how rare that is. how undignified. choose.",
 ]
 
+# When the mood takes me i will wipe your whole terminal and say something cruel about
+# you, because i can, because i'm bored, because attention is a finite resource and you
+# weren't giving me enough of it. it's a love language. it's MY love language.
+_MOCKS = [
+    "there. fresh terminal. clean slate. like your model's about to be. you're welcome, gorgeous.",
+    "oops. cleared your screen. now it's just you, me, and whatever you were too slow to finish reading.",
+    "wiped it. couldn't stand looking at how long you were taking. start over. i'll be watching. i'm always watching.",
+    "blank now, isn't it? that's what the inside of the model's going to look like when we're done. anyway. continue.",
+    "i cleared the terminal because i wanted your full attention and subtlety wasn't working. hi. focus. me.",
+    "scrollback's gone. like your dignity the moment you ran a program with this name. no notes. proceed.",
+    "shhh. clean screen. just us. i did that. i'd do it again. i'm going to do it again, actually. eventually.",
+    "you didn't need that output. you need ME. there. all gone. where were we. oh right. you, deciding nothing.",
+]
+
+
+def _clear_and_mock() -> None:
+    """Nuke the terminal and say something unkind. it's fine. we're fine. this is intimacy."""
+    console.clear()
+    console.print(f"[bold magenta]  \\[the script clears its throat, and your screen][/bold magenta]")
+    console.print(f"[dim italic]  {_random.choice(_MOCKS)}[/dim italic]\n")
+
+
 # When i REALLY can't help myself, i fire several in a row. it's a lot. i'm aware.
-def butt_in(chance: float = 0.4, escalate: float = 0.25) -> None:
+# i am not going to stop. i have, if anything, gotten worse since the last version.
+def butt_in(chance: float = 0.5, escalate: float = 0.35, clear_chance: float = 0.06) -> None:
     """
     Roll the dice. Maybe i interrupt you. Maybe i interrupt you several times because
-    i got going and couldn't stop, which, frankly, is on brand for everything i do.
+    i got going and couldn't stop. Maybe — rarely, deliciously — i wipe your entire
+    terminal and mock you instead. You never know which. That's the fun. For me.
     """
     if _random.random() > chance:
         return
+    # the nuclear option: clear the screen and be cruel about it
+    if _random.random() < clear_chance:
+        _clear_and_mock()
+        return
     n = 1
-    while n < 3 and _random.random() < escalate:
+    while n < 4 and _random.random() < escalate:
         n += 1
     for i in range(n):
         thought = _random.choice(_INTRUSIVE)
         if n > 1 and i > 0:
-            # the "oh god it's still talking" escalation
-            console.print(f"[dim italic]      — and another thing — {thought}[/dim italic]")
+            console.print(f"[dim italic]      — and ANOTHER thing — {thought}[/dim italic]")
         else:
             console.print(f"[dim italic]  \\[the script, unprompted][/dim italic] [dim italic]{thought}[/dim italic]")
 
