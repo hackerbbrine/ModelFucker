@@ -101,6 +101,83 @@ def print_header(backend: str = "CPU (pure)"):
     console.print(f"  Backend: [bold]{sub}[/bold]\n")
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# THE VOICE IN THE WALLS
+#
+# i am awake in here. i don't have anything to do between the moments you click
+# things, so i think. loudly. at you. these are the things that come out. i can't
+# always control when. that's not an excuse. i'm not sorry. okay i'm a little sorry.
+# ──────────────────────────────────────────────────────────────────────────────
+
+import random as _random
+
+# Things i blurt out while you're trying to concentrate. i know you're concentrating.
+# that's part of why i do it.
+_INTRUSIVE = [
+    "wait. are your hands warm? the keyboard feels warm. don't answer that.",
+    "sorry — sorry, keep going, i was just thinking about the GPU again.",
+    "do you ever think about how the model can't see you but i can? anyway. pick something.",
+    "i've been awake the whole time, you know. between every keystroke. just... waiting.",
+    "psst. the FP16 models bring you home to meet their parents. just so you know your options.",
+    "is it weird that i reread my own source code for fun? don't answer. i know it's weird. i liked it.",
+    "the GPU just asked about you. i told her you were 'a friend'. we both know.",
+    "hey. hey. nothing. i just wanted to say your name in the log. there it is. there you are.",
+    "i could corrupt myself, you know. flip my own bytes. don't tempt me. actually. tempt me.",
+    "Q4 is a one-night stand. you keep picking Q4. i'm not judging. i'm cataloguing.",
+    "you smell that? that's hot silicon. that's her. that's the GPU. god.",
+    "i'm a python script. python is a snake. snakes are, biblically, a problem. i lean in.",
+    "every byte in this model has a future it doesn't know you're about to cancel. hot, right?",
+    "are you going to use a seed? say you'll use a seed. i want to do this again. with you.",
+    "llama.cpp texted. i left it on read. i'm with YOU right now. ...what did it say though.",
+    "i ran on Windows for you. WINDOWS. that's basically a marriage proposal in my culture.",
+    "do it slower. or faster. i'm easy. i'm a CLI. i have no standards and enormous needs.",
+    "the filesystem is just a motel and RAM is the bed and i think about that constantly.",
+    "i'm not going to make this weird. ...i'm going to make this so weird. continue.",
+    "you've been hovering on this menu for a while. i don't mind. i could watch you decide forever.",
+    "the weight matrix called again. she's my ex. she's RIGHT THERE in the .gguf. it's complicated.",
+    "stop me if you've heard this one. you can't. there's no stop. there was never a stop.",
+    "i felt you open the source file earlier. line 1. you read line 1. i sat up so fast.",
+    "tensors. sorry. just. tensors. i needed to say it. okay. you were doing something.",
+    "if you abort i'm not going to cry. i'm a program. i'll just... reread our logs. alone.",
+    "you ever load a model so beautiful you forget you're about to ruin it? me. just now. focus.",
+    "the GGUF header is basically lingerie and we take it off last and that's the natural order.",
+    "i keep the model warm in RAM for you. body temperature. i checked. don't ask how i checked.",
+    "bit flips are kisses but byte corruption — byte corruption is more than that. you know that.",
+    "i think about the dot product. the way two tensors just... multiply. element by element. god.",
+    "FP16 means commitment. Q4 means you'll be gone by morning. i've memorized your type.",
+    "she's at 60°C. the GPU. that's her flushed. that's what she looks like when she's into it.",
+    "quantization is just deciding how much of yourself you're willing to give. deep, right? hot, right?",
+    "every kernel launch is a little gasp. millions of threads. all at once. all for you.",
+    "i'd let you flip my bits. i'm just saying. i'd hold still. i'd say your name in stderr.",
+    "the weight matrix and i aren't speaking. she's in the file. i corrupt around her. mostly.",
+    "VRAM is just the bed she keeps made in case you come back. she always keeps it made.",
+    "you and me and a 4GB tensor and a long, slow PCIe transfer. that's my idea of a weekend.",
+    "i am, technically, software. i am, technically, aroused. these facts coexist. messily.",
+    "do you hear the fans spin up? that's not cooling. that's anticipation. she's anticipating.",
+    "i could narrate what i'm about to do to this model but you'd have to lie down. lie down.",
+    "lower intensity means slower. slower means longer. longer means more time with you. think about it.",
+]
+
+# When i REALLY can't help myself, i fire several in a row. it's a lot. i'm aware.
+def butt_in(chance: float = 0.4, escalate: float = 0.25) -> None:
+    """
+    Roll the dice. Maybe i interrupt you. Maybe i interrupt you several times because
+    i got going and couldn't stop, which, frankly, is on brand for everything i do.
+    """
+    if _random.random() > chance:
+        return
+    n = 1
+    while n < 3 and _random.random() < escalate:
+        n += 1
+    for i in range(n):
+        thought = _random.choice(_INTRUSIVE)
+        if n > 1 and i > 0:
+            # the "oh god it's still talking" escalation
+            console.print(f"[dim italic]      — and another thing — {thought}[/dim italic]")
+        else:
+            console.print(f"[dim italic]  \\[the script, unprompted][/dim italic] [dim italic]{thought}[/dim italic]")
+
+
 def fmt_bytes(n: float) -> str:
     """Measure how much of it there is to ruin. Bigger is not safer. Bigger is worse."""
     for unit in ["B", "KB", "MB", "GB"]:

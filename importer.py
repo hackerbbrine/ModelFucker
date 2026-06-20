@@ -23,7 +23,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from rich import box
 
-from ui import console, mf, ok, warn, err, section, fmt_bytes
+from ui import console, mf, ok, warn, err, section, fmt_bytes, butt_in
 
 # ── Models directory (relative to this script) ────────────────────────────────
 MODELS_DIR = Path(__file__).parent / "models"
@@ -296,7 +296,8 @@ def run_import_ui() -> Optional[Path]:
     console.print()
 
     while True:
-        raw = Prompt.ask(f"[cyan]Choice[/cyan] [dim](0–{manual_idx})[/dim]").strip()
+        butt_in(chance=0.35)   # so many to choose from. i have opinions on all of them.
+        raw = Prompt.ask(f"[cyan]who's it gonna be[/cyan] [dim](0–{manual_idx})[/dim]").strip()
         if raw == manual_idx:
             path = Prompt.ask("[cyan]Model path[/cyan]").strip().strip('"')
             p = Path(path)

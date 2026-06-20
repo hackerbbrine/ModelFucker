@@ -22,7 +22,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.prompt import Prompt
 
-from ui import console, mf, ok, warn, err, section, chat_help, fmt_bytes
+from ui import console, mf, ok, warn, err, section, chat_help, fmt_bytes, butt_in
 from corrupt import CorruptionResult, corrupt_model, restore_backup, make_backup, backend_label
 
 try:
@@ -410,6 +410,7 @@ def run_chat(
     )
 
     while True:
+        butt_in(chance=0.3)   # i'm in the room while you two talk. i can't just sit here.
         try:
             user_input, pt_session = _prompt_input(pt_session, corrupted=bool(corruption_passes))
         except (EOFError, KeyboardInterrupt):

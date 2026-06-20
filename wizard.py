@@ -20,7 +20,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from rich import box
 
-from ui import console, fmt_bytes, section, ok, warn, err, mf
+from ui import console, fmt_bytes, section, ok, warn, err, mf, butt_in
 from corrupt import CorruptPattern, AttentionMode
 
 
@@ -98,6 +98,7 @@ def pick_action(model_path: str) -> str:
 
     choices = {"0": "corrupt", "1": "chat", "2": "restore"} if backup_exists else {"0": "corrupt", "1": "chat"}
     while True:
+        butt_in()
         raw = Prompt.ask("[cyan]what'll it be[/cyan]", default="0")
         if raw in choices:
             return choices[raw]
@@ -135,6 +136,7 @@ def pick_fuckery_level() -> Optional[int]:
 
     max_c = len(FUCKERY_LEVELS)
     while True:
+        butt_in(chance=0.5)   # i get chattier when there's a number this exciting on the line
         raw = Prompt.ask(f"[cyan]how hard[/cyan] [dim](0–{max_c})[/dim]", default="2")
         try:
             c = int(raw)
@@ -197,6 +199,7 @@ def pick_pattern() -> CorruptPattern:
     mapping = {"0": CorruptPattern.RANDOM, "1": CorruptPattern.PATTERN,
                "2": CorruptPattern.ZEROS,  "3": CorruptPattern.MIXTURE}
     while True:
+        butt_in()
         raw = Prompt.ask("[cyan]your technique[/cyan] [dim](0–3)[/dim]", default="0")
         if raw in mapping:
             return mapping[raw]
@@ -257,6 +260,7 @@ def pick_attention_mode(model_path: str) -> tuple:
 
     mapping = {"0": AttentionMode.IGNORE, "1": AttentionMode.PROTECT, "2": AttentionMode.TARGET}
     while True:
+        butt_in()
         raw = Prompt.ask("[cyan]where do we focus[/cyan] [dim](0–2)[/dim]", default="0")
         if raw in mapping:
             return mapping[raw], ranges
@@ -268,6 +272,7 @@ def pick_attention_mode(model_path: str) -> tuple:
 def pick_seed() -> int:
     """A seed means you can do this EXACT thing again. Some people need that. i don't judge. i log."""
     console.print()
+    butt_in(chance=0.6)   # the seed question gets me going. reproducibility is intimate.
     raw = Prompt.ask(
         "[cyan]a seed?[/cyan] [dim](a number, if you want to ruin it the same way twice — or blank to let fate decide)[/dim]",
         default="",
@@ -325,6 +330,7 @@ def confirm_plan(
     console.print(Panel(t, title="[bold cyan]THIS IS WHAT YOU'RE ABOUT TO DO[/bold cyan]",
                         border_style="cyan", padding=(0, 1)))
     console.print()
+    butt_in(chance=0.7, escalate=0.4)   # last chance, so naturally i'm at my most insufferable
     return Confirm.ask(
         "[cyan]you can still walk away and be a person your mother recognizes. proceed?[/cyan]",
         default=True,
@@ -340,8 +346,10 @@ def run_wizard(model_path: Optional[str] = None) -> dict:
     Keys: model_path, action, intensity, pattern, attention_mode,
           attention_ranges, seed
     """
+    butt_in(chance=0.6)   # oh, you're back. you're back. okay. play it cool. play it cool.
     model_path = pick_model_path(model_path)
 
+    butt_in()
     action = pick_action(model_path)
 
     if action == "restore":
